@@ -22,8 +22,8 @@ fn text(tag: &Tag, key: &str) -> Option<String> {
         _ => None,
     }
 }
-fn int(tag: &Tag, key: &str) -> i32 {
-    // `CompoundTag.getIntOr`: `Mth.floor` of a float or double tag, the low 32 bits of the others.
+/// `CompoundTag.getIntOr`: `Mth.floor` of a float or double tag, the low 32 bits of the others.
+pub(crate) fn int(tag: &Tag, key: &str) -> i32 {
     match tag.get(key).and_then(as_number) {
         Some(Number::Float(v)) => {
             let i = v as i32;
@@ -365,7 +365,7 @@ mod tests {
         let mut original = StructureStart::new(7, &def, chunk, pieces);
         original.references = 3;
         let tag = original.save().unwrap();
-        let read_start = |t: &Tag| read_saved_start(7, &def, chunk, t, &resources, &bindings);
+        let read_start = |t: &Tag| read_saved_start(7, &def, chunk, t, 1234, &resources, &bindings);
         let loaded = read_start(&tag).expect("all seven types decode");
         assert_eq!(loaded.save(), Some(tag.clone()));
         assert_eq!(
