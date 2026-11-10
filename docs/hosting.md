@@ -5,6 +5,13 @@ program, no Java, one settings file, a command line, and a web panel. Vanilla 26
 can join it. This page covers what works on `main` today and says plainly what doesn't yet. The design and the
 plan are in [server.md](server.md).
 
+> **Rift Event Server.** This guide was written for Horizon's releases. Here, read `horizon-server` as
+> `rift-server`, `horizon-prepare` as `rift-prepare` and `horizon-engine` as `rift-engine`
+> ([rift-naming.md](rift-naming.md)). This fork has no release archives, install scripts, hosting-panel eggs or
+> update channel: skip "1. Install", the `update` and `rollback` commands and "Hosting panels", build with
+> `scripts/build.sh` as [the README](../README.md) says, and treat "Docker" as not adapted yet. What the guide
+> says about `server.toml`, the commands, the panel, the API, backups and Velocity applies as written.
+
 ## Before you start
 
 - **Online mode checks accounts** (release v2026.10.17.07 and newer). With `online_mode = true`, the
@@ -366,12 +373,12 @@ share of the tick (`level_*`), what each mob type costs per dimension (one tick 
 tick, mobs, µs a mob), the chunk workers' CPU by job (load, generate, decorate, finish, light), the network bytes
 a player sends and receives, and what recording cost the tick (measured, usually well under 1 % of MSPT). They
 hold no names, UUIDs or addresses, so you can attach them to an issue as they are. On the console it is
-`horizon-report [SECONDS]`; `horizon-report stop` writes the report now and `horizon-report status` says how far
+`rift-report [SECONDS]`; `rift-report stop` writes the report now and `rift-report status` says how far
 it is. Nothing restarts: the report runs beside the game.
 
-To see a slow stretch tick by tick, `horizon-trace [SECONDS]` (30 by default, up to 300) writes every thread's timed
+To see a slow stretch tick by tick, `rift-trace [SECONDS]` (30 by default, up to 300) writes every thread's timed
 steps to `reports/trace-<time>.json`; [ui.perfetto.dev](https://ui.perfetto.dev) opens it as a timeline, one row per
-thread. `horizon-trace stop` ends it early. It holds step names and times only.
+thread. `rift-trace stop` ends it early. It holds step names and times only.
 
 Between reports, the log keeps the spikes: a tick slower than 250 ms writes a `Horizon: slow tick` line with
 its phases (`HORIZON_SPIKES=MS` in the engine's environment sets another threshold), and a server more than
