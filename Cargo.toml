@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["launcher", "crates/horizon-telemetry-server", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys"]
+exclude = ["third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys"]
 members = [
     "crates/horizon-addresses",
     "crates/horizon-core",
@@ -19,7 +19,7 @@ members = [
     "crates/horizon-server-files",
     "crates/horizon-anticheat",
     "crates/horizon-chat-filter",
-    # The Model Context Protocol, shared by horizon-ctl, horizon-server and the launcher.
+    # The Model Context Protocol, shared by horizon-ctl and horizon-server.
     "crates/horizon-mcp",
     "crates/horizon-server",
     "crates/horizon-bots",
@@ -31,19 +31,11 @@ members = [
     "crates/horizon-system",
     "crates/horizon-platform",
     "crates/horizon-hooks",
-    "crates/horizon-game",
-    "crates/horizon-official",
-    "crates/horizon-heartbeat",
-    "crates/horizon-discord",
-    "crates/horizon-official-servers",
     "crates/horizon-bench",
     "crates/horizon-friends",
-    "crates/horizon-relay",
     "crates/horizon-mods",
     "crates/horizon-mod-api-gen",
     "crates/horizon-mod-api-gen/dispatch-tests",
-    "crates/cargo-horizon-mod",
-    "crates/horizon-port-pack",
     "crates/horizon-shaders",
     "crates/horizon-optifine",
     "crates/horizon-polytone",

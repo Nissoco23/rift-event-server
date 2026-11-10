@@ -416,15 +416,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-horizon-mod"
-version = "0.1.0"
-dependencies = [
- "horizon-mods",
- "serde_json",
- "zip",
-]
-
-[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1651,15 +1642,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-discord"
-version = "0.1.0"
-dependencies = [
- "horizon-platform",
- "log",
- "serde_json",
-]
-
-[[package]]
 name = "horizon-dualsense"
 version = "0.1.0"
 dependencies = [
@@ -1686,15 +1668,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-game"
-version = "0.1.0"
-dependencies = [
- "horizon-client",
- "horizon-mods",
- "horizon-threads",
-]
-
-[[package]]
 name = "horizon-hdr"
 version = "0.1.0"
 dependencies = [
@@ -1703,15 +1676,6 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wgpu",
-]
-
-[[package]]
-name = "horizon-heartbeat"
-version = "0.1.0"
-dependencies = [
- "horizon-platform",
- "horizon-telemetry",
- "log",
 ]
 
 [[package]]
@@ -1799,29 +1763,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-official"
-version = "0.1.0"
-dependencies = [
- "horizon-discord",
- "horizon-friends",
- "horizon-game",
- "horizon-heartbeat",
- "horizon-official-servers",
- "horizon-platform",
- "log",
- "winresource",
-]
-
-[[package]]
-name = "horizon-official-servers"
-version = "0.1.0"
-dependencies = [
- "horizon-addresses",
- "horizon-platform",
- "log",
-]
-
-[[package]]
 name = "horizon-optifine"
 version = "0.1.0"
 dependencies = [
@@ -1854,19 +1795,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-port-pack"
-version = "0.1.0"
-dependencies = [
- "horizon-mods",
- "serde",
- "serde_json",
- "sha1",
- "toml",
- "ureq",
- "zip",
-]
-
-[[package]]
 name = "horizon-prepare"
 version = "0.1.0"
 dependencies = [
@@ -1893,15 +1821,6 @@ dependencies = [
  "sha1",
  "sha2",
  "socket2 0.5.10",
-]
-
-[[package]]
-name = "horizon-relay"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.3.4",
- "horizon-friends",
- "serde_json",
 ]
 
 [[package]]
@@ -4170,17 +4089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "socks"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0c3dbbd9ae980613c6dd8e28a9407b50509d3803b57624d5dfe8315218cd58b"
-dependencies = [
- "byteorder",
- "libc",
- "winapi",
-]
-
-[[package]]
 name = "spake2"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4658,7 +4566,6 @@ dependencies = [
  "once_cell",
  "rustls",
  "rustls-pki-types",
- "socks",
  "url",
  "webpki-roots 0.26.11",
 ]

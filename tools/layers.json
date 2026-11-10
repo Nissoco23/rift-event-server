@@ -6,10 +6,7 @@
     "horizon": ["platform", "horizon"]
   },
   "workspaces": [
-    "Cargo.toml",
-    "launcher/Cargo.toml",
-    "crates/horizon-telemetry-server/Cargo.toml",
-    "crates/horizon-mod-registry/Cargo.toml"
+    "Cargo.toml"
   ],
   "crates": {
     "horizon-assets": "engine",
@@ -30,11 +27,9 @@
     "horizon-threads": "engine",
     "horizon-world": "engine",
 
-    "cargo-horizon-mod": "platform",
     "horizon-anticheat": "platform",
     "horizon-chat-filter": "platform",
     "horizon-dualsense": "platform",
-    "horizon-game": "platform",
     "horizon-hdr": "platform",
     "horizon-mcp": "platform",
     "horizon-mod-api-gen": "platform",
@@ -43,7 +38,6 @@
     "horizon-optifine": "platform",
     "horizon-platform": "platform",
     "horizon-polytone": "platform",
-    "horizon-port-pack": "platform",
     "horizon-shader-api": "platform",
     "horizon-shaders": "platform",
     "horizon-theme": "platform",
@@ -51,18 +45,10 @@
     "horizon-addresses": "horizon",
     "horizon-bench": "horizon",
     "horizon-cosmetics": "horizon",
-    "horizon-discord": "horizon",
     "horizon-friends": "horizon",
-    "horizon-heartbeat": "horizon",
-    "horizon-launcher": "horizon",
-    "horizon-mod-registry": "horizon",
-    "horizon-official": "horizon",
-    "horizon-official-servers": "horizon",
-    "horizon-relay": "horizon",
     "horizon-release-sign": "horizon",
     "horizon-server": "horizon",
     "horizon-telemetry": "horizon",
-    "horizon-telemetry-server": "horizon",
 
     "horizon-bots": "tool",
     "horizon-mod-api-gen-tests": "tool",
