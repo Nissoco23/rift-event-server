@@ -89,7 +89,8 @@ horizon-prepare --prepare --server-jar /path/to/server.jar
 ```
 
 Add `--minecraft-dir PATH` if your launcher keeps the game elsewhere. The prepared files go to
-`game-files`, which updates keep.
+`game-files`, which updates keep. With Prism Launcher or MultiMC, which keep no server jar, use `--prism-dir`
+instead of `--server-jar`: [the README](../README.md#prepare-the-game-files-once-per-machine) has the command.
 
 **On a headless machine** (a VPS, a home server), prepare on your own computer instead, with the launcher or
 `horizon-prepare`, and copy the prepared `26.3` folder to the server with `horizon-server import-resources DIR` (it checks the

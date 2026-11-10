@@ -39,15 +39,28 @@ while; later ones only rebuild what changed.
 
 The engine needs data derived from **your own** copy of Minecraft Java Edition 26.3. You need:
 
-- a JDK 25 (`java` on the `PATH`, or `JAVA_HOME`);
+- a JDK 25 with `javac` (`java` on the `PATH`, `JAVA_HOME`, or `--java-home PATH`);
 - Minecraft Java Edition 26.3, played once from the official launcher, so that its files are on the computer
   (`rift-prepare` reads the launcher's folder, or `--minecraft-dir PATH`);
-- the 26.3 `server.jar` (the `downloads.server.url` in the launcher's `versions/26.3/26.3.json`).
+- the 26.3 `server.jar` (the `downloads.server.url` in the launcher's `versions/26.3/26.3.json`); Prism
+  Launcher and MultiMC users skip this, see below.
 
 From the repository folder:
 
 ```sh
 dist/rift-prepare --prepare --server-jar /path/to/server.jar
+```
+
+**Prism Launcher or MultiMC.** They keep no server jar, and `rift-prepare` does not need one: pass
+`--prism-dir` the launcher's folder or one of its instances, and `--java-home` a JDK 25. Prism's client jar
+stands in for the server side and nothing is downloaded. The exporters are compiled from source, so the Java
+must be a JDK with `javac`, not only a runtime; on the machine this was tried on, Prism's own Java 25 (the
+`java/java-runtime-epsilon` folder in its data folder) is one. On macOS:
+
+```sh
+dist/rift-prepare --prepare \
+  --prism-dir "$HOME/Library/Application Support/PrismLauncher/instances/26.3" \
+  --java-home "$HOME/Library/Application Support/PrismLauncher/java/java-runtime-epsilon"
 ```
 
 The result goes to `.local/horizon-client/26.3`, which Git ignores. Never commit or share it. On a headless
