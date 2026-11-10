@@ -1,0 +1,14 @@
+{
+  "hooks": [],
+  "helpers": [
+    {
+      "name": "set_player_velocity",
+      "target": "horizon_client::game::native_player_state::Game<'_>::native_set_player_velocity"
+    }
+  ],
+  "rust_summary": "a mod giving a server player a velocity, as Bukkit's `Player.setVelocity` does (`native_set_player_velocity`).",
+  "doc_summary": "`native_set_player_velocity(uuid, velocity)` gives the player `uuid` the velocity `velocity` in blocks a tick (`Entity.setDeltaMovement` and `hurtMarked`; Bukkit's `Player.setVelocity`): the server's copy takes it and their client is sent it as its own motion. Each axis is cut to -3.9..=3.9; whether it was sent. Bundles need \"hooks\": @API:set_player_velocity@.",
+  "comments": [
+    "crates/horizon-client/src/game/native_player_state.rs"
+  ]
+}

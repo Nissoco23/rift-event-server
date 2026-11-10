@@ -4074,7 +4074,8 @@ it moves only what the player sees, not where they are or aim.
 
 ### A player's motion
 
-`crates/horizon-client/src/game/native_motion.rs`: a push on a client, a flying speed on a server.
+`crates/horizon-client/src/game/native_motion.rs`: a push on a client, a flying speed on a server. A velocity for a
+server player is `native_set_player_velocity`, in `native_player_state.rs`.
 
 - `native_push_player([x, y, z])` (client) adds a push to the player's own velocity, in blocks a tick, as an
   explosion's knockback does: the player's own game moves them. The server didn't send it, so on a LAN or dedicated
@@ -4088,6 +4089,16 @@ it moves only what the player sees, not where they are or aim.
   (sprinting) a player flies more than 10 blocks a tick: anyone but the single-player owner then meets the server's
   moved-too-quickly check, which can send them back, as vanilla's does. It answers false for a player not on this server,
   on a client, and inside a player's hook (call it from a tick hook).
+- `native_set_player_velocity(uuid, [x, y, z])` (server, `host.set_player_velocity`) gives a server player a velocity in
+  blocks a tick, as Bukkit's `Player.setVelocity` does (`Entity.setDeltaMovement` and `hurtMarked`): the server's copy
+  takes it and their client is sent `SetEntityMotion`, which it takes as its own motion, as it takes a knockback. The
+  anticheat's movement replay counts the packet as the server's push, so a launch or a knockback a mod sends is not a
+  move it can't explain. `native_entity_set_velocity` and `native_entity_push` leave players alone (their client moves
+  them); this is the call for one. Outside a player's hook the packet goes out at once; inside the player's own hook it
+  goes with the tick's marked velocity, and other players are not reached there (call it from a tick hook to push
+  several). Each axis is cut to -3.9..=3.9, and an upward velocity lifts the player off the ground. It answers false for
+  a value that is not a number, a player not reached, a dead one, and on a client. Bundles need
+  `"hooks": @API:set_player_velocity@`.
 
 ### Health HUD rows a mod draws
 
