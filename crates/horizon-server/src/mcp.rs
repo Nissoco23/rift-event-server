@@ -1,4 +1,4 @@
-//! `horizon-server mcp` (docs/server.md, section 8): the Model Context Protocol over stdin and stdout
+//! `rift-server mcp` (docs/server.md, section 8): the Model Context Protocol over stdin and stdout
 //! (JSON-RPC 2.0, one message per line, as `horizon-ctl mcp`), so an AI agent can run and moderate a server.
 //! Each tool is one control API call on the server running in the folder, with the token it reads itself;
 //! every action shows in the server's log as any other API call does.
@@ -8,12 +8,12 @@ use serde_json::{Map, Value, json};
 use std::path::Path;
 
 /// What an agent reads before its first call.
-const INSTRUCTIONS: &str = "Run and moderate a Horizon (Minecraft Java Edition 26.3) server. Start with status and players. Moderation tools (kick, ban, pardon, ban_ip, op, whitelist...) run vanilla's console commands and answer `changed` and the console's lines; events and logs read what happened since a number they return. Destructive tools that can't be undone need confirm: true.";
+const INSTRUCTIONS: &str = "Run and moderate a Rift Event Server (Minecraft Java Edition 26.3). Start with status and players. Moderation tools (kick, ban, pardon, ban_ip, op, whitelist...) run vanilla's console commands and answer `changed` and the console's lines; events and logs read what happened since a number they return. Destructive tools that can't be undone need confirm: true.";
 
 /// The revisions this server advertises: `horizon_mcp` serves them (`2026-07-28` stateless,
 /// `2025-06-18` for the clients that still open with `initialize`).
 fn server() -> horizon_mcp::Server<'static> {
-    horizon_mcp::Server::new("horizon-server", crate::VERSION, INSTRUCTIONS)
+    horizon_mcp::Server::new("rift-server", crate::VERSION, INSTRUCTIONS)
 }
 
 /// One tool: its name, what it does, its arguments (name, JSON type, what it is, required), and whether it
@@ -205,7 +205,7 @@ const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "stop",
-        what: "Stop the game and horizon-server",
+        what: "Stop the game and rift-server",
         args: &[CONFIRM],
         destructive: true,
     },
@@ -590,7 +590,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
-        assert_eq!(init["result"]["serverInfo"]["name"], "horizon-server");
+        assert_eq!(init["result"]["serverInfo"]["name"], "rift-server");
         // A modern client gets the same tools with the framing that revision requires.
         let mut meta = serde_json::Map::new();
         meta.insert(

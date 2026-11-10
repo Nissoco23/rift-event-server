@@ -2,7 +2,7 @@
 //! server.properties (`[properties]` in server.toml) turn on a remote console, which listens as vanilla 26.3's
 //! `net.minecraft.server.rcon.thread.RconThread` does and speaks `RconClient`'s protocol: little-endian packets
 //! of a length, a request id, a type, a payload and two NULs. The supervisor serves it, so it answers while the
-//! game restarts, and a command goes to the game as `horizon-server cmd` sends it.
+//! game restarts, and a command goes to the game as `rift-server cmd` sends it.
 //!
 //! Where it differs from vanilla, on purpose: a packet is read from the stream (vanilla takes one `read` for
 //! one packet, so a command that TCP splits closes the connection), the password is compared in constant time,

@@ -10,7 +10,7 @@
 //! player is sent back where the server last had them); from `alert` on, online operators and the
 //! console are told; from `kick` on, the player is disconnected. A check's kicks are counted per player
 //! across sessions ([`Strikes`]), and the kick that reaches its `ban_after` bans the player instead
-//! (`banned-players.json`, reason "Horizon anticheat: <check>"). Any threshold at 0 turns that action
+//! (`banned-players.json`, reason "Rift anticheat: <check>"). Any threshold at 0 turns that action
 //! off.
 //!
 //! The checks are written from vanilla 26.3's own rules and from what cheats are publicly described to

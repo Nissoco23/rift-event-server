@@ -1,4 +1,4 @@
-//! `horizon-server`: host a Horizon server (docs/server.md). It keeps the server's settings in `server.toml`,
+//! `rift-server`: host a Rift Event Server (docs/server.md). It keeps the server's settings in `server.toml`,
 //! runs the game headless as the engine, and manages the vanilla files around it.
 
 mod admin;
@@ -43,9 +43,9 @@ const VERSION: &str = match option_env!("HORIZON_VERSION") {
 };
 
 const HELP: &str = "\
-horizon-server: host a Horizon (Minecraft Java Edition 26.3) server
+rift-server: host a Rift Event Server (Minecraft Java Edition 26.3)
 
-Usage: horizon-server [--dir DIR] <command>
+Usage: rift-server [--dir DIR] <command>
 
   init        Set up a server here: the EULA, the world, the port, who may join (asks, or takes flags:
               --eula --world NAME --seed SEED --port N --whitelist/--no-whitelist --player NAME... --op NAME
@@ -93,7 +93,7 @@ Usage: horizon-server [--dir DIR] <command>
               at its next start
   import FILE Write server.toml from a vanilla server.properties
   import-resources DIR
-              Copy game files prepared elsewhere (by the launcher or horizon-prepare) into place, after
+              Copy game files prepared elsewhere (by rift-prepare) into place, after
               checking they are complete and for this Minecraft version; the old copy stays on failure
   op NAME, deop NAME
   whitelist on|off|list, whitelist add|remove NAME
@@ -113,7 +113,7 @@ fn main() -> ExitCode {
     let mut dir = PathBuf::from(".");
     if let Some(i) = args.iter().position(|a| a == "--dir") {
         if i + 1 >= args.len() {
-            eprintln!("horizon-server: --dir needs a folder");
+            eprintln!("rift-server: --dir needs a folder");
             return ExitCode::from(2);
         }
         dir = PathBuf::from(args.remove(i + 1));
@@ -125,7 +125,7 @@ fn main() -> ExitCode {
             Ok(())
         }
         Some("version" | "-V" | "--version") => {
-            println!("horizon-server {VERSION}");
+            println!("rift-server {VERSION}");
             Ok(())
         }
         Some("init") => init_answers(&args[1..]).and_then(|a| init::run(&dir, a)),
@@ -158,7 +158,7 @@ fn main() -> ExitCode {
                     ),
                 }
             }
-            None => Err("restore needs a backup (`horizon-server backups` lists them)".into()),
+            None => Err("restore needs a backup (`rift-server backups` lists them)".into()),
         },
         Some("import-resources") => import_resources::command(&dir, &args[1..]),
         Some("import") => import(&dir, &args[1..]),
@@ -171,13 +171,13 @@ fn main() -> ExitCode {
             cli::moderate(&dir, command, &args[1..])
         }
         Some(other) => Err(format!(
-            "unknown command {other}; `horizon-server help` lists them"
+            "unknown command {other}; `rift-server help` lists them"
         )),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("horizon-server: {e}");
+            eprintln!("rift-server: {e}");
             ExitCode::FAILURE
         }
     }

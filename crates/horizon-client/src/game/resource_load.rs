@@ -407,10 +407,7 @@ pub(super) fn load_resources(
             (Err(e), _) if packs => e.to_string(),
             (_, Ok(Err(e))) if packs => e,
             (_, Ok(Err(e))) => {
-                return Err(format!(
-                    "{e}\nPrepare resources with the launcher, or: horizon-prepare --prepare"
-                )
-                .into());
+                return Err(format!("{e}\nPrepare resources with: rift-prepare --prepare").into());
             }
             (_, Err(e)) => return Err(e.into()),
             (Err(e), Ok(Ok(_))) => return Err(e),

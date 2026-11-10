@@ -442,7 +442,7 @@ impl Shared {
         timeout: Duration,
     ) -> Result<(), String> {
         let install = self.install.clone().ok_or(
-            "this horizon-server wasn't installed by install.sh or install.ps1: no updates",
+            "this rift-server doesn't run from a releases/ folder with a current link: no updates (rebuild with scripts/build.sh instead)",
         )?;
         {
             let mut update = self.update.lock().unwrap();
@@ -455,7 +455,7 @@ impl Shared {
             if !install.release(&tag).is_dir() || tag.contains(['/', '\\']) {
                 self.update.lock().unwrap().busy = None;
                 return Err(format!(
-                    "{tag} isn't installed (`horizon-server update` downloads it)"
+                    "{tag} isn't installed (`rift-server update` downloads it)"
                 ));
             }
             self.switch_to(tag, timeout);

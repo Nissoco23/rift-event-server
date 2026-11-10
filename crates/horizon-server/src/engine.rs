@@ -12,15 +12,15 @@ use std::{
 };
 
 /// The game's program names, most specific first: the server build (the game without sound or
-/// controllers, so it needs neither ALSA nor udev on Linux; `horizon-server-linux-x86_64.tar.gz` holds it),
+/// controllers, so it needs neither ALSA nor udev on Linux; scripts/build.sh builds it as `rift-engine`),
 /// else the full game.
-const PROGRAMS: [&str; 2] = ["horizon-engine", "horizon-client"];
+const PROGRAMS: [&str; 3] = ["rift-engine", "horizon-engine", "horizon-client"];
 
 fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
-/// The game program: `engine.path`, else one installed beside `horizon-server` (in the release in use when
+/// The game program: `engine.path`, else one installed beside `rift-server` (in the release in use when
 /// it was installed by the installers), else one on the PATH.
 pub fn program(config: &Config, dir: &Path) -> Result<PathBuf, String> {
     program_in(config, dir, crate::update::Install::find().as_ref())
@@ -58,8 +58,8 @@ pub fn program_in(
         })
         .find(|p| p.is_file())
         .ok_or_else(|| {
-            "the game program (horizon-client) is neither beside horizon-server nor on the PATH: \
-             install it there, or set engine.path in server.toml"
+            "the game program (rift-engine) is neither beside rift-server nor on the PATH: \
+             scripts/build.sh puts both in dist/; or set engine.path in server.toml"
                 .into()
         })
 }
@@ -104,8 +104,8 @@ fn start_failure(program: &Path, code: Option<i32>, stderr: &str) -> String {
         && (reason.contains("libasound") || reason.contains("libudev"))
     {
         text.push_str(
-            "\nThe full game needs ALSA's and udev's libraries (libasound.so.2, libudev.so.1). Install the \
-             server build, which needs neither (packaging/server/install.sh picks it on Linux), or the \
+            "\nThe full game needs ALSA's and udev's libraries (libasound.so.2, libudev.so.1). Build the \
+             server engine with scripts/build.sh, which needs neither, or install the \
              libraries:\n  Debian, Ubuntu: sudo apt install libasound2 libudev1   (Ubuntu 24.04 and later: \
              libasound2t64)\n  Fedora, RHEL: sudo dnf install alsa-lib systemd-libs\n  Arch: sudo pacman -S \
              alsa-lib systemd-libs\n  NixOS: enable programs.nix-ld with alsa-lib and udev in its libraries",
@@ -133,7 +133,7 @@ pub fn resource_candidates(config: &Config, dir: &Path, program: Option<&Path>) 
     out
 }
 
-/// The prepared game files: a folder holding the manifest every `horizon-prepare` run writes
+/// The prepared game files: a folder holding the manifest every `rift-prepare` run writes
 /// (`asset-index.json` comes only with the optional sounds, which a server doesn't need).
 pub fn resources(config: &Config, dir: &Path, program: Option<&Path>) -> Result<PathBuf, String> {
     let candidates = resource_candidates(config, dir, program);
@@ -147,15 +147,15 @@ pub fn resources(config: &Config, dir: &Path, program: Option<&Path>) -> Result<
                 .map(|d| format!("  {}", d.display()))
                 .collect();
             format!(
-                "no prepared game files. Horizon reads them from your own copy of Minecraft 26.3:\n\
-                 prepare them with `horizon-prepare --prepare --server-jar PATH` (or the launcher) and copy \
+                "no prepared game files. Rift reads them from your own copy of Minecraft 26.3:\n\
+                 prepare them with `rift-prepare --prepare --server-jar PATH` and copy \
                  the folder to resources/ here, or set engine.resources in server.toml. Looked in:\n{}",
                 tried.join("\n")
             )
         })
 }
 
-/// The files `horizon-prepare` derives from the game and the engine reads at start (docs/hosting.md: a folder
+/// The files `rift-prepare` derives from the game and the engine reads at start (docs/hosting.md: a folder
 /// prepared before `registries.json` and `commands.json` were kept stops with "registries.json not found").
 const PREPARED_FILES: [&str; 4] = [
     "facts.json",
@@ -169,7 +169,7 @@ const PREPARED_DIRS: [&str; 2] = ["assets/minecraft/font", "assets/minecraft/tex
 
 /// Checks a prepared folder before the engine starts on it, so a half-copied or stale folder is named
 /// instead of surfacing as the engine's `os error 2` at every restart. Checks what the manifest
-/// (`horizon-resources.json`, written last by `horizon-prepare`) records: the derived files are there and
+/// (`horizon-resources.json`, written last by `rift-prepare`) records: the derived files are there and
 /// match the hashes it holds, and the asset folders the engine loads from aren't empty.
 pub fn check_prepared(resources: &Path) -> Result<(), String> {
     let manifest = std::fs::read_to_string(resources.join("horizon-resources.json"))
@@ -216,7 +216,7 @@ pub fn check_prepared(resources: &Path) -> Result<(), String> {
     }
     Err(format!(
         "the prepared game files in {} are incomplete or damaged:\n  {}\nPrepare them again with \
-         `horizon-prepare --prepare --server-jar PATH` (or the launcher), or copy the whole prepared folder to \
+         `rift-prepare --prepare --server-jar PATH` or copy the whole prepared folder to \
          the server again.",
         resources.display(),
         problems.join("\n  ")
@@ -400,13 +400,13 @@ mod tests {
         let config = Config::default();
         let server = root.join("server");
         assert!(resources(&config, &server, Some(&program)).is_err());
-        // What `horizon-prepare` writes on every run; no asset index without `horizon-prepare sounds`.
+        // What `rift-prepare` writes on every run; no asset index without `rift-prepare sounds`.
         std::fs::write(prepared.join("horizon-resources.json"), "{}").unwrap();
         assert_eq!(resources(&config, &server, Some(&program)), Ok(prepared));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    /// A folder as `horizon-prepare` leaves it, as far as `check_prepared` looks.
+    /// A folder as `rift-prepare` leaves it, as far as `check_prepared` looks.
     fn prepared_folder(name: &str) -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("horizon-server-{name}-{}", std::process::id()));

@@ -1684,18 +1684,22 @@ impl Game<'_> {
                 state.lists.lock().unwrap().stop = true;
             }
             // Horizon's own, on the console only: a performance report (report.rs).
-            "horizon-report" if rest.first() == Some(&"stop") => match state.report.take() {
-                Some(recording) => {
-                    log("INFO", "Stopping the performance report: writing it now");
-                    self.finish_report(recording, state.view, state.max_players);
+            "rift-report" | "horizon-report" if rest.first() == Some(&"stop") => {
+                match state.report.take() {
+                    Some(recording) => {
+                        log("INFO", "Stopping the performance report: writing it now");
+                        self.finish_report(recording, state.view, state.max_players);
+                    }
+                    None => log("INFO", "No performance report is being recorded"),
                 }
-                None => log("INFO", "No performance report is being recorded"),
-            },
-            "horizon-report" if rest.first() == Some(&"status") => match &state.report {
-                Some(recording) => log("INFO", &recording.status()),
-                None => log("INFO", "No performance report is being recorded"),
-            },
-            "horizon-report" => {
+            }
+            "rift-report" | "horizon-report" if rest.first() == Some(&"status") => {
+                match &state.report {
+                    Some(recording) => log("INFO", &recording.status()),
+                    None => log("INFO", "No performance report is being recorded"),
+                }
+            }
+            "rift-report" | "horizon-report" => {
                 let seconds = match rest.first().map(|s| s.parse::<u32>()) {
                     None => Ok(60),
                     Some(Ok(s)) if (1..=report::MAX_SECONDS).contains(&s) => Ok(s),
@@ -1705,7 +1709,7 @@ impl Game<'_> {
                     (Err(()), _) => log(
                         "INFO",
                         &format!(
-                            "horizon-report [SECONDS | stop | status]: 1 to {} seconds, 60 by default",
+                            "rift-report [SECONDS | stop | status]: 1 to {} seconds, 60 by default",
                             report::MAX_SECONDS
                         ),
                     ),
@@ -1722,13 +1726,13 @@ impl Game<'_> {
                 }
             }
             // Horizon's own, on the console only: every thread's spans as a timeline (report.rs).
-            "horizon-trace" if rest.first() == Some(&"stop") => {
+            "rift-trace" | "horizon-trace" if rest.first() == Some(&"stop") => {
                 match horizon_client::spans::trace::stop() {
                     Some(events) => log("INFO", &format!("Trace stopped: {events} events written")),
                     None => log("INFO", "No trace is being written"),
                 }
             }
-            "horizon-trace" => {
+            "rift-trace" | "horizon-trace" => {
                 let seconds = match rest.first().map(|s| s.parse::<u32>()) {
                     None => Some(30),
                     Some(Ok(s)) if (1..=report::TRACE_MAX_SECONDS).contains(&s) => Some(s),
@@ -1738,7 +1742,7 @@ impl Game<'_> {
                     None => log(
                         "INFO",
                         &format!(
-                            "horizon-trace [SECONDS | stop]: 1 to {} seconds, 30 by default",
+                            "rift-trace [SECONDS | stop]: 1 to {} seconds, 30 by default",
                             report::TRACE_MAX_SECONDS
                         ),
                     ),
@@ -2301,7 +2305,7 @@ impl Game<'_> {
         };
         lists.lock().unwrap().bans.add(BanEntry::new(
             user,
-            Some("Horizon anticheat".into()),
+            Some("Rift anticheat".into()),
             None,
             Some(reason.to_owned()),
         ));

@@ -9,9 +9,9 @@
   ],
   "initialize": {
     "capabilities": {"tools": {}},
-    "instructions": "Run and moderate a Horizon (Minecraft Java Edition 26.3) server. Start with status and players. Moderation tools (kick, ban, pardon, ban_ip, op, whitelist...) run vanilla's console commands and answer `changed` and the console's lines; events and logs read what happened since a number they return. Destructive tools that can't be undone need confirm: true.",
+    "instructions": "Run and moderate a Rift Event Server (Minecraft Java Edition 26.3). Start with status and players. Moderation tools (kick, ban, pardon, ban_ip, op, whitelist...) run vanilla's console commands and answer `changed` and the console's lines; events and logs read what happened since a number they return. Destructive tools that can't be undone need confirm: true.",
     "protocolVersion": "2025-06-18",
-    "serverInfo": {"name": "horizon-server", "version": "0.1.0"}
+    "serverInfo": {"name": "rift-server", "version": "0.1.0"}
   },
   "tools_list": {
     "resultType": "complete",
@@ -38,7 +38,7 @@
       {"annotations": {"destructiveHint": false, "readOnlyHint": false}, "description": "Change settings, e.g. {\"world.difficulty\": \"hard\"}; says which apply now and which at the next start", "name": "set_config", "properties": {"changes": "object"}, "required": ["changes"]},
       {"annotations": {"destructiveHint": false, "readOnlyHint": false}, "description": "Start the server in the background and wait until the game is up", "name": "start", "properties": {}, "required": []},
       {"annotations": {"destructiveHint": true, "readOnlyHint": false}, "description": "Restart the game (players are disconnected for a moment)", "name": "restart", "properties": {}, "required": []},
-      {"annotations": {"destructiveHint": true, "readOnlyHint": false}, "description": "Stop the game and horizon-server", "name": "stop", "properties": {"confirm": "boolean"}, "required": ["confirm"]}
+      {"annotations": {"destructiveHint": true, "readOnlyHint": false}, "description": "Stop the game and rift-server", "name": "stop", "properties": {"confirm": "boolean"}, "required": ["confirm"]}
     ]
   },
   "unknown_method": {"code": -32601, "message": "Method not found: ping"},

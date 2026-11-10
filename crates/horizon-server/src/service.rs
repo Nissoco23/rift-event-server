@@ -1,6 +1,6 @@
-//! `horizon-server service install|uninstall|print`: run the server at boot or login under the system's own
+//! `rift-server service install|uninstall|print`: run the server at boot or login under the system's own
 //! service manager (docs/server.md, section 3): a systemd unit on Linux, a launchd agent on macOS, a task at
-//! logon on Windows. The service runs `horizon-server run`, which restarts the game if it crashes; the
+//! logon on Windows. The service runs `rift-server run`, which restarts the game if it crashes; the
 //! service manager restarts the supervisor itself.
 
 use std::{
@@ -28,10 +28,10 @@ pub fn name(dir: &Path) -> String {
     if clean.is_empty() {
         clean = "server".into();
     }
-    format!("horizon-server-{clean}")
+    format!("rift-server-{clean}")
 }
 
-/// The program the service runs: the `horizon-server` on the PATH (the installer's launcher, which keeps
+/// The program the service runs: the `rift-server` on the PATH (the installer's launcher, which keeps
 /// running the current version after an update), else this program, through the installer's `current`
 /// link when it runs from an installed release.
 fn program() -> Result<PathBuf, String> {
@@ -39,7 +39,7 @@ fn program() -> Result<PathBuf, String> {
         .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
         .unwrap_or_default()
         .into_iter()
-        .map(|d| d.join(format!("horizon-server{}", std::env::consts::EXE_SUFFIX)))
+        .map(|d| d.join(format!("rift-server{}", std::env::consts::EXE_SUFFIX)))
         .find(|p| p.is_file());
     match on_path {
         Some(path) => Ok(path),
@@ -75,8 +75,8 @@ pub fn systemd_unit(program: &Path, dir: &Path, user: Option<&str>) -> String {
     };
     format!(
         "[Unit]
-Description=Horizon server in {dir}
-Documentation=https://github.com/horizon-rust/horizon/blob/main/docs/server.md
+Description=Rift Event Server in {dir}
+Documentation=https://github.com/Nissoco23/rift-event-server/blob/main/docs/server.md
 Wants=network-online.target
 After=network-online.target
 
@@ -161,7 +161,7 @@ pub fn windows_task_xml(user: &str, program: &Path, dir: &Path) -> String {
         r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Horizon server in {dir}</Description>
+    <Description>Rift Event Server in {dir}</Description>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -223,8 +223,8 @@ fn launchd_path(label: &str) -> Result<PathBuf, String> {
 
 fn launchd_label(dir: &Path) -> String {
     format!(
-        "dev.horizon.server.{}",
-        name(dir).trim_start_matches("horizon-server-")
+        "dev.rift.server.{}",
+        name(dir).trim_start_matches("rift-server-")
     )
 }
 
@@ -444,11 +444,8 @@ mod tests {
 
     #[test]
     fn names_follow_the_folder() {
-        assert_eq!(
-            name(Path::new("/srv/My Server!")),
-            "horizon-server-my-server"
-        );
-        assert_eq!(name(Path::new("/")), "horizon-server-server");
+        assert_eq!(name(Path::new("/srv/My Server!")), "rift-server-my-server");
+        assert_eq!(name(Path::new("/")), "rift-server-server");
     }
 
     #[test]

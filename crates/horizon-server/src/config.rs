@@ -15,7 +15,7 @@ pub const FILE: &str = "server.toml";
 pub const PROPERTIES: &str = "server.properties";
 
 /// What `init` writes: every typed setting, with vanilla 26.3's defaults and what it means.
-pub const TEMPLATE: &str = r##"# Horizon server settings (docs/server.md). The server writes them into server.properties before
+pub const TEMPLATE: &str = r##"# Rift Event Server settings (docs/server.md). The server writes them into server.properties before
 # every start: edit this file, not that one.
 
 [server]
@@ -44,7 +44,7 @@ hardcore = false             # one life: a player who dies becomes a spectator
 [properties]
 
 [engine]
-path = ""                    # the game program; empty: the one installed beside horizon-server
+path = ""                    # the game program; empty: the one beside rift-server
 resources = ""               # the prepared game files; empty: resources/ here, else the usual places
 restart_on_crash = true      # start the game again when it crashes
 low_memory = false           # true: no transparent huge pages, ~60 MB less idle for ~1 % more tick time
@@ -81,7 +81,7 @@ webhook = ""                 # the channel's webhook URL (a secret: anyone with 
 events = ["chat", "join", "leave", "death"]   # what is posted; "kick" too if you like
 enabled = true               # false pauses it and keeps the webhook
 
-# Horizon's anticheat (docs/anticheat.md) is on: `combat` drops attacks no vanilla client sends and
+# The anticheat (docs/anticheat.md) is on: `combat` drops attacks no vanilla client sends and
 # `ground` the false ground claims of a no-fall or a walk on water; both kick, and ban at the second kick.
 # timer and prediction only write logs/anticheat.log until they're trusted. To change it:
 # [anticheat]
@@ -504,7 +504,7 @@ impl Config {
     pub fn load(dir: &Path) -> Result<Self, String> {
         let path = dir.join(FILE);
         let text = std::fs::read_to_string(&path)
-            .map_err(|e| format!("{}: {e} (run `horizon-server init` first)", path.display()))?;
+            .map_err(|e| format!("{}: {e} (run `rift-server init` first)", path.display()))?;
         Self::parse(&text).map_err(|e| format!("{}: {e}", path.display()))
     }
 

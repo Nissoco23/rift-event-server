@@ -85,7 +85,7 @@ fn forward(shared: &Shared, settings: &Settings) {
     let wanted = |kind: &str| settings.events.iter().any(|e| e == kind);
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(20))
-        .user_agent(concat!("horizon-server/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("rift-server/", env!("CARGO_PKG_VERSION")))
         .build();
     let font = FontRef::try_from_slice(FONT).expect("the bundled font parses");
     let mut glyphs = HashMap::new();

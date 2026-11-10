@@ -187,9 +187,7 @@ pub fn find(dir: &Path, name: &str) -> Result<String, String> {
     all.iter()
         .find(|b| b.name.ends_with(&label))
         .map(|b| b.name.clone())
-        .ok_or_else(|| {
-            format!("no backup {name:?} in {DIR}/ (`horizon-server backups` lists them)")
-        })
+        .ok_or_else(|| format!("no backup {name:?} in {DIR}/ (`rift-server backups` lists them)"))
 }
 
 /// Puts the backup's world in place of the current one, which goes to `backups/replaced-<time>/`. The

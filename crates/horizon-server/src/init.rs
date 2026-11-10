@@ -1,4 +1,4 @@
-//! `horizon-server init`: the first run (docs/server.md, section 3). It asks about the EULA, the world, the
+//! `rift-server init`: the first run (docs/server.md, section 3). It asks about the EULA, the world, the
 //! port and who may join, imports an existing `server.properties`, finds the game, and writes `server.toml`.
 //! Every question has a flag, so it also runs unattended (Docker, scripts).
 
@@ -98,12 +98,15 @@ impl Prompt {
     }
 }
 
+/// The MOTD `init` gives a new server, in place of vanilla's "A Minecraft Server".
+const RIFT_MOTD: &str = "Rift Event Server";
+
 pub fn run(dir: &Path, answers: Answers) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let toml_path = dir.join(config::FILE);
     if toml_path.exists() {
         return Err(format!(
-            "{} already exists: this server is set up. Edit it, or start the server with `horizon-server run`",
+            "{} already exists: this server is set up. Edit it, or start the server with `rift-server run`",
             toml_path.display()
         ));
     }
@@ -124,7 +127,10 @@ pub fn run(dir: &Path, answers: Answers) -> Result<(), String> {
         );
         cfg
     } else {
-        Config::default()
+        // A new server starts with Rift's own MOTD (vanilla's default is "A Minecraft Server").
+        let mut cfg = Config::default();
+        cfg.server.motd = RIFT_MOTD.into();
+        cfg
     };
 
     // 1. The EULA: only a yes writes eula=true.
@@ -223,7 +229,7 @@ pub fn run(dir: &Path, answers: Answers) -> Result<(), String> {
 
     std::fs::write(&toml_path, config::render(&cfg)).map_err(|e| e.to_string())?;
     println!(
-        "Wrote {}. Start the server with: horizon-server run --dir {}",
+        "Wrote {}. Start the server with: rift-server run --dir {}",
         toml_path.display(),
         dir.display()
     );
@@ -298,6 +304,7 @@ mod tests {
             ("survival", "12345", 25599)
         );
         assert!(eula::agreed(&dir.join("eula.txt")).unwrap());
+        assert_eq!(cfg.server.motd, "Rift Event Server");
         assert!(!cfg.server.online_mode);
         let white = std::fs::read_to_string(dir.join("whitelist.json")).unwrap();
         assert!(

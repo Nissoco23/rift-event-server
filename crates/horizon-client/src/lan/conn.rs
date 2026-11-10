@@ -1257,8 +1257,8 @@ fn login_and_configure(
             data: {
                 let mut w = horizon_protocol::buf::Writer::new();
                 // MinecraftServer.getServerModName: "vanilla" there; a modded
-                // server names itself, and Horizon's says "horizon", as its client does.
-                w.string("horizon");
+                // server names itself, and this one says "rift" (the "horizon" compared with below is a client's).
+                w.string("rift");
                 w.data
             },
         }),

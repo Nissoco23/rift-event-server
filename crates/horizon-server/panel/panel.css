@@ -1,4 +1,4 @@
-/* The Horizon server panel, in the launcher's Glass look (docs/design-system.md, Glass). The colours are
+/* The Rift server panel, in the launcher's Glass look (docs/design-system.md, Glass). The colours are
    horizon-theme's `--glass-*` and night-sky tokens (crates/horizon-theme/tokens.css); dark by default, the
    dawn when the system asks for light. */
 @font-face { font-family: "Geist"; font-weight: 400; font-display: swap; src: local("Geist"), url("/fonts/Geist-Regular.ttf") format("truetype"); }

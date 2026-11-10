@@ -155,7 +155,7 @@ pub(crate) fn optional_imports(mut assets: Result<&mut Assets, &str>, log: Log) 
         };
         if let Err(error) = result {
             log(&format!(
-                "{failure} not imported: {error}; run horizon-prepare {command} later"
+                "{failure} not imported: {error}; run rift-prepare {command} later"
             ));
         }
     }
@@ -762,7 +762,7 @@ mod tests {
             let lines = lines.into_inner();
             assert_eq!(
                 lines[0],
-                format!("Title panorama not imported: {error}; run horizon-prepare panorama later")
+                format!("Title panorama not imported: {error}; run rift-prepare panorama later")
             );
             // The fonts and packs come on their own when only a panorama face is missing.
             match missing {
@@ -773,19 +773,19 @@ mod tests {
                         "Built-in pack assets ready: 2 files, 0.0 MB",
                         // This store has no `pack.mcmeta`, so the languages report it.
                         "Languages not imported: pack.mcmeta is missing from the asset index; \
-                         run horizon-prepare languages later"
+                         run rift-prepare languages later"
                     ]
                 ),
                 _ => {
                     assert!(lines[1].starts_with("Unifont glyphs not imported: "));
                     assert!(
                         lines[2].starts_with("Programmer Art and High Contrast not imported: ")
-                            && lines[2].ends_with("; run horizon-prepare packs later"),
+                            && lines[2].ends_with("; run rift-prepare packs later"),
                         "{lines:?}"
                     );
                     assert!(
                         lines[3].starts_with("Languages not imported: ")
-                            && lines[3].ends_with("; run horizon-prepare languages later"),
+                            && lines[3].ends_with("; run rift-prepare languages later"),
                         "{lines:?}"
                     );
                 }

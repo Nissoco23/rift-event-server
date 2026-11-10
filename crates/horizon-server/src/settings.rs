@@ -1,4 +1,4 @@
-//! `horizon-server config`: read server.toml's settings, and change them the way the server checks them
+//! `rift-server config`: read server.toml's settings, and change them the way the server checks them
 //! (docs/server.md, section 4). A running server takes what vanilla can change live through its console
 //! (difficulty, the default game mode, the whitelist) and through its management settings (the message of the
 //! day, the player limit) at once; the rest applies at the next start.
@@ -82,7 +82,7 @@ impl Outcome {
         }
         if !self.restart.is_empty() {
             out += &format!(
-                "Saved; restart the server to apply: {} (`horizon-server restart`)\n",
+                "Saved; restart the server to apply: {} (`rift-server restart`)\n",
                 self.restart.join(", ")
             );
         }
@@ -109,9 +109,7 @@ pub fn parse_change(
         let like = current
             .get(section)
             .and_then(|s| s.get(field))
-            .ok_or_else(|| {
-                format!("{key} is not a setting (`horizon-server config` lists them)")
-            })?;
+            .ok_or_else(|| format!("{key} is not a setting (`rift-server config` lists them)"))?;
         match like {
             toml::Value::Boolean(_) => toml::Value::Boolean(match text {
                 "true" | "on" | "yes" => true,

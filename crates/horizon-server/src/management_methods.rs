@@ -251,7 +251,7 @@ pub fn call(shared: &Shared, client: u32, short: &str, argument: &Value) -> Resu
         }
         _ => Err((
             INTERNAL_ERROR,
-            Some(format!("minecraft:{short} isn't in Horizon yet")),
+            Some(format!("minecraft:{short} isn't supported yet")),
         )),
     }
 }

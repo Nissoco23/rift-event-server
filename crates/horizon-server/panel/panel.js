@@ -1,4 +1,4 @@
-// The Horizon server panel (docs/server.md, section 6). It polls the control API once a second through the
+// The Rift server panel (docs/server.md, section 6). It polls the control API once a second through the
 // panel's session; every change carries the X-Horizon header. Text from the server is only ever set with
 // textContent, never as HTML.
 "use strict";
@@ -184,7 +184,7 @@ function route() {
   }
   $("page-title").textContent = PAGES[page][0];
   $("page-lead").textContent = PAGES[page][1];
-  document.title = `${PAGES[page][0]} · ${state.config ? state.config.server.motd : "Horizon server"}`;
+  document.title = `${PAGES[page][0]} · ${state.config ? state.config.server.motd : "Rift server"}`;
   if (page === "console") scrollLog(true);
   if (state.status) renderUpdate(state.status.update);
   renderCharts();
@@ -218,7 +218,7 @@ function renderStatus(status) {
   phase.textContent = status.phase;
   phase.className = `state ${status.phase}`;
   $("uptime").textContent = status.engine_uptime_seconds != null ? `· up ${duration(status.engine_uptime_seconds)}` : "";
-  $("version").textContent = `horizon-server ${status.version}`;
+  $("version").textContent = `rift-server ${status.version}`;
   const stopped = status.phase === "stopped";
   $("start").hidden = !stopped;
   $("restart").hidden = stopped;
@@ -229,12 +229,12 @@ function renderStatus(status) {
   renderFacts();
 }
 
-// Updates (horizon-server update): a newer release, one under way, or how the last one ended.
+// Updates (rift-server update): a newer release, one under way, or how the last one ended.
 function renderUpdate(update) {
   const offer = update && !update.busy && update.available;
   let text = "";
   if (update && update.busy) text = `Updating: ${update.busy}…`;
-  else if (offer) text = `Horizon ${update.available} is out. This server runs ${update.installed}.`;
+  else if (offer) text = `Rift Event Server ${update.available} is out. This server runs ${update.installed}.`;
   else if (update && update.last && !update.ok) text = update.last;
   $("update").hidden = !text || page !== "overview";
   $("update").classList.toggle("failed", Boolean(update && update.last && !update.ok && !update.busy && !offer));
@@ -342,7 +342,7 @@ function renderOnline() {
 function renderFacts() {
   const c = state.config, s = state.status;
   if (!c || !s) return;
-  $("server-name").textContent = c.server.motd || "Horizon server";
+  $("server-name").textContent = c.server.motd || "Rift server";
   $("server-address").textContent = c.server.bind ? `${c.server.bind}:${c.server.port}` : `port ${c.server.port}`;
   const last = state.backups.map((b) => backupParts(b.name).when).filter(Boolean).sort((a, b) => b - a)[0];
   const facts = [

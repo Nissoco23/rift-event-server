@@ -882,7 +882,7 @@ pub(super) fn make_streaming(
             .map(|stem| horizon_client::scoreboard::tag_to_json(&stem));
         let mut inner = VanillaTerrain::for_world_with_settings(&options.resources.join("worldgen"), &overrides, pack.assets.registry, &biomes, seed, preset, dim.id(), structures, saved_stem.as_ref()).map_err(|e| {
                 if overrides.is_empty() {
-                    format!("{e}\nPrepare the worldgen bundle with the launcher, or: horizon-prepare --prepare")
+                    format!("{e}\nPrepare the worldgen bundle with: rift-prepare --prepare")
                 } else {
                     format!("{e}\nThe world's data packs change its world generation: one of them may not be made for this version")
                 }

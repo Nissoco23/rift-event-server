@@ -1,16 +1,16 @@
 <!-- Generated from crates/horizon-server/src (the help text, config::TEMPLATE, api::ROUTES) by reference.rs; a test fails when this file is out of date. Update it with: HORIZON_WRITE_DOCS=1 cargo test -p horizon-server reference -->
 # Server reference
 
-Everything `horizon-server` offers a host or a tool: its commands, every `server.toml` key and the control API. How to host: [hosting.md](../hosting.md); the design: [server.md](../server.md); stability and versions: [stability.md](stability.md).
+Everything `rift-server` offers a host or a tool: its commands, every `server.toml` key and the control API. How to host: [hosting.md](../hosting.md); the design: [server.md](../server.md); stability and versions: [stability.md](stability.md).
 
 ## Commands
 
-`horizon-server help` prints:
+`rift-server help` prints:
 
 ```text
-horizon-server: host a Horizon (Minecraft Java Edition 26.3) server
+rift-server: host a Rift Event Server (Minecraft Java Edition 26.3)
 
-Usage: horizon-server [--dir DIR] <command>
+Usage: rift-server [--dir DIR] <command>
 
   init        Set up a server here: the EULA, the world, the port, who may join (asks, or takes flags:
               --eula --world NAME --seed SEED --port N --whitelist/--no-whitelist --player NAME... --op NAME
@@ -58,7 +58,7 @@ Usage: horizon-server [--dir DIR] <command>
               at its next start
   import FILE Write server.toml from a vanilla server.properties
   import-resources DIR
-              Copy game files prepared elsewhere (by the launcher or horizon-prepare) into place, after
+              Copy game files prepared elsewhere (by rift-prepare) into place, after
               checking they are complete and for this Minecraft version; the old copy stays on failure
   op NAME, deop NAME
   whitelist on|off|list, whitelist add|remove NAME
@@ -75,7 +75,7 @@ Settings live in server.toml; the server writes server.properties from it before
 
 ## `server.toml`
 
-Horizon server settings (docs/server.md). The server writes them into server.properties before every start: edit this file, not that one. Unknown keys are refused. `horizon-server init` writes this file with these defaults; `horizon-server config set SECTION.KEY=VALUE` changes it.
+Rift Event Server settings (docs/server.md). The server writes them into server.properties before every start: edit this file, not that one. Unknown keys are refused. `rift-server init` writes this file with these defaults; `rift-server config set SECTION.KEY=VALUE` changes it.
 
 ### `[server]`
 
@@ -112,7 +112,7 @@ Any other server.properties key, spelled as vanilla spells it, for example: spaw
 
 | Key | Default | In `server.properties` | What it does |
 | --- | --- | --- | --- |
-| `path` | `""` |  | the game program; empty: the one installed beside horizon-server |
+| `path` | `""` |  | the game program; empty: the one beside rift-server |
 | `resources` | `""` |  | the prepared game files; empty: resources/ here, else the usual places |
 | `restart_on_crash` | `true` |  | start the game again when it crashes |
 | `low_memory` | `false` |  | true: no transparent huge pages, ~60 MB less idle for ~1 % more tick time |

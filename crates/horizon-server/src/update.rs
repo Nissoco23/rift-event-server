@@ -1,4 +1,4 @@
-//! Updates and rollbacks (docs/server.md, section 7) for a `horizon-server` installed by install.sh or
+//! Updates and rollbacks (docs/server.md, section 7) for a `rift-server` installed by install.sh or
 //! install.ps1: each release in `<dir>/releases/<tag>`, `<dir>/current` pointing at the one in use, and
 //! `<dir>/previous` naming the one before it. An update downloads the current Nightly from GitHub (the only build
 //! Horizon ships since 2026-10-28; GitHub's latest release while there is none), checks it against the SHA-256 in
@@ -14,7 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const REPO: &str = "horizon-rust/horizon";
+const REPO: &str = "Nissoco23/rift-event-server";
 /// The release archives for this computer, most specific first: on Linux the server build (no ALSA or
 /// udev), else the full game (releases before the server build).
 fn assets_for(os: &str, arch: &str, musl: bool) -> &'static [&'static str] {
@@ -76,8 +76,8 @@ impl Install {
     /// The install, or why there is none to update.
     pub fn required() -> Result<Self, String> {
         Self::find().ok_or_else(|| {
-            "this horizon-server wasn't installed by install.sh or install.ps1 (no releases/ and current \
-             around it): update it the way you installed it"
+            "this rift-server doesn't run from an installed release (no releases/ and current \
+             around it), so it can't update itself: rebuild it with scripts/build.sh"
                 .into()
         })
     }
@@ -294,7 +294,7 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     ureq::get(url)
         .set("Accept", "application/vnd.github+json")
-        .set("User-Agent", "horizon-server")
+        .set("User-Agent", "rift-server")
         .call()
         .map_err(|e| match e {
             ureq::Error::Status(404, _) => "404".to_string(),
@@ -514,7 +514,7 @@ pub fn download(install: &Install, release: &Release) -> Result<PathBuf, String>
     let part = folder.join(format!("{}.part", release.asset));
     let result = (|| {
         let mut reader = ureq::get(&release.url)
-            .set("User-Agent", "horizon-server")
+            .set("User-Agent", "rift-server")
             .call()
             .map_err(|e| format!("downloading {}: {e}", release.asset))?
             .into_reader();
@@ -714,7 +714,7 @@ pub fn command(dir: &Path, args: &[String]) -> Result<(), String> {
             if check {
                 if update_available(&release.tag, &current) {
                     println!(
-                        "Horizon {} is out; this server runs {current}. `horizon-server update` installs it.",
+                        "Rift Event Server {} is out; this server runs {current}. `rift-server update` installs it.",
                         release.tag
                     );
                 } else {
@@ -736,7 +736,10 @@ pub fn command(dir: &Path, args: &[String]) -> Result<(), String> {
                     release.tag
                 );
             }
-            println!("Downloading Horizon {} ({})...", release.tag, release.asset);
+            println!(
+                "Downloading Rift Event Server {} ({})...",
+                release.tag, release.asset
+            );
             let archive = download(&install, &release)?;
             (release.tag, archive, true)
         }
@@ -792,7 +795,7 @@ fn switch_to(dir: &Path, install: &Install, tag: &str, timeout: Duration) -> Res
         )
         .map_err(|e| {
             if e == "no such endpoint" {
-                "the running server is older than updates: stop it, then run `horizon-server update` again".into()
+                "the running server is older than updates: stop it, then run `rift-server update` again".into()
             } else {
                 e
             }
@@ -832,7 +835,7 @@ fn switch_to(dir: &Path, install: &Install, tag: &str, timeout: Duration) -> Res
         if Instant::now() > deadline {
             println!();
             return Err(
-                "no word from the server about the update; `horizon-server logs` shows where it is"
+                "no word from the server about the update; `rift-server logs` shows where it is"
                     .into(),
             );
         }
@@ -874,9 +877,9 @@ fn switch_stopped(dir: &Path, install: &Install, tag: &str) -> Result<(), String
         return Err(format!("stayed on {from}: {e}"));
     }
     println!(
-        "Switched from {from} to {tag}.{backed_up}{} `horizon-server rollback` goes back to {from}.",
+        "Switched from {from} to {tag}.{backed_up}{} `rift-server rollback` goes back to {from}.",
         if server {
-            " The server is stopped: `horizon-server start` runs the new version."
+            " The server is stopped: `rift-server start` runs the new version."
         } else {
             ""
         }
