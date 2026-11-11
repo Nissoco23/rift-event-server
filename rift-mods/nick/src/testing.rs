@@ -9,6 +9,7 @@
 
 use crate::rng::Rng;
 use crate::skins::{Failure, Lookup, Skin};
+use crate::state::OnJoin;
 use crate::{Nick, Shared};
 use horizon_client::mod_api::{
     Hooks, Host, NativeAuthority, NativeLifecycleContext, NativeServerPlayer, NativeWorldEpoch,
@@ -268,15 +269,21 @@ impl Rig {
     /// A rig whose `config/nick.toml` holds `config` and whose pool is `pool` (one name a line),
     /// with every lookup answered at once.
     pub fn new(config: &str, pool: &str) -> Self {
-        Self::build(config, pool, false)
+        Self::build(config, pool, false, false)
+    }
+
+    /// The same, with `/nickonjoin` as a server starts it (on): the rigs above have it off, so the
+    /// players they put on the server keep their names until a test says otherwise.
+    pub fn fresh(config: &str, pool: &str) -> Self {
+        Self::build(config, pool, false, true)
     }
 
     /// The same with lookups on worker threads, as the server has them.
     pub fn new_in_background(config: &str, pool: &str) -> Self {
-        Self::build(config, pool, true)
+        Self::build(config, pool, true, false)
     }
 
-    fn build(config: &str, pool: &str, background: bool) -> Self {
+    fn build(config: &str, pool: &str, background: bool, on_join: bool) -> Self {
         static RIGS: AtomicUsize = AtomicUsize::new(0);
         let dir = std::env::temp_dir().join(format!(
             "nick-rig-{}-{}",
@@ -290,6 +297,9 @@ impl Rig {
         let lookup = FakeLookup::new(&ACCOUNTS);
         let module = Nick::with(lookup.clone(), background, Rng::new(7));
         let nick = module.handle();
+        if !on_join {
+            nick.state.lock().unwrap().on_join = OnJoin::Off;
+        }
         Self {
             host: FakeHost {
                 players: Vec::new(),
@@ -1611,7 +1621,7 @@ mod tests {
     fn the_command_is_registered_for_the_configs_level_and_a_new_level_reaches_the_players() {
         let mut rig = Rig::with_players();
         let usages = rig.registered();
-        assert_eq!(usages.len(), 12);
+        assert_eq!(usages.len(), 16);
         assert!(usages.iter().all(|(usage, level, node)| {
             usage.starts_with("nick") && *level == 2 && node.as_deref() == Some("nick.admin")
         }));
@@ -1656,6 +1666,226 @@ mod tests {
             pool.lines().filter(|l| !l.starts_with('#')).count() >= 250,
             "{pool}"
         );
+    }
+
+    // ---- nicknames on join ---------------------------------------------------------------
+
+    const POOL: &str = "Rex\nZed\nMax\nAda\n";
+
+    fn joined_rig() -> Rig {
+        let mut rig = Rig::fresh("", POOL);
+        rig.join("Alice", ALICE, 4);
+        rig
+    }
+
+    #[test]
+    fn a_server_starts_with_nicknames_on_join_on_and_the_player_is_told_theirs() {
+        let mut rig = joined_rig();
+        rig.join("Bob", BOB, 0);
+        assert_eq!(rig.nickname(BOB), None, "not before the tick");
+        rig.tick();
+        let nickname = rig.nickname(BOB).expect("a player gets one on joining");
+        assert!(POOL.lines().any(|n| n == nickname), "{nickname}");
+        assert_eq!(rig.host.nicknames[&BOB], nickname);
+        assert_eq!(rig.host.textures[&BOB], skin_of(&nickname));
+        assert_eq!(
+            rig.host.told_to(BOB),
+            [format!(
+                "You have automatically been assigned a nickname upon join. Your nickname is {nickname}"
+            )]
+        );
+        // On is for players: the operator who joined first kept their name, and was told nothing.
+        assert_eq!(rig.nickname(ALICE), None);
+        assert!(rig.host.told_to(ALICE).is_empty());
+        assert!(rig.host.logged().contains(&format!(
+            "INFO: Nick: the server on join set Bob ({BOBS_ID}) to {nickname} (random)"
+        )));
+    }
+
+    #[test]
+    fn off_gives_no_one_a_nickname_and_all_gives_the_operators_one_too() {
+        let mut rig = joined_rig();
+        assert_eq!(
+            rig.run_console("nickonjoin off"),
+            ["Random nicknames on join set to off (no one)!"]
+        );
+        rig.join("Bob", BOB, 0);
+        rig.join("Dan", 0xda4, 4);
+        rig.ticks(3);
+        assert_eq!(rig.nickname(BOB), None);
+        assert_eq!(rig.nickname(0xda4), None);
+        assert!(rig.host.nicknames.is_empty() && rig.host.told.is_empty());
+
+        assert_eq!(
+            rig.run_console("nickonjoin all"),
+            ["Random nicknames on join set to all (everyone, operators too)!"]
+        );
+        rig.join("Eve", EVE, 0);
+        rig.join("Carol", CAROL, 2);
+        rig.ticks(3);
+        assert!(rig.nickname(EVE).is_some(), "a player");
+        assert!(rig.nickname(CAROL).is_some(), "an operator, with all");
+        assert_eq!(rig.nickname(BOB), None, "who joined before keeps none");
+        let told = rig.host.told_to(CAROL);
+        assert_eq!(told.len(), 1);
+        assert!(told[0].starts_with(
+            "You have automatically been assigned a nickname upon join. Your nickname is "
+        ));
+    }
+
+    #[test]
+    fn on_leaves_the_operators_alone_whoever_asked() {
+        let mut rig = joined_rig();
+        rig.run_console("nickonjoin on");
+        rig.join("Dan", 0xda4, 4);
+        rig.join("Bob", BOB, 0);
+        rig.ticks(3);
+        assert_eq!(rig.nickname(0xda4), None);
+        assert!(rig.nickname(BOB).is_some());
+    }
+
+    #[test]
+    fn a_player_who_rejoins_with_it_off_comes_back_under_their_own_name() {
+        let mut rig = joined_rig();
+        rig.join("Bob", BOB, 0);
+        rig.tick();
+        assert!(rig.nickname(BOB).is_some());
+        rig.leave(BOB);
+        rig.run_console("nickonjoin off");
+        rig.join("Bob", BOB, 0);
+        rig.ticks(3);
+        assert_eq!(rig.nickname(BOB), None);
+        assert!(rig.host.nicknames.is_empty() && rig.host.tags.is_empty());
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+    }
+
+    #[test]
+    fn a_player_who_rejoins_with_it_on_is_given_a_new_nickname() {
+        let mut rig = joined_rig();
+        rig.join("Bob", BOB, 0);
+        rig.tick();
+        let first = rig.nickname(BOB).unwrap();
+        rig.leave(BOB);
+        assert_eq!(rig.nickname(BOB), None, "it ended with their session");
+        rig.host.told.clear();
+        rig.join("Bob", BOB, 0);
+        rig.tick();
+        let second = rig.nickname(BOB).expect("a nickname again");
+        assert_ne!(first, second, "a name is not drawn twice in a round");
+        assert_eq!(rig.host.nicknames[&BOB], second);
+        assert_eq!(
+            rig.host.told_to(BOB),
+            [format!(
+                "You have automatically been assigned a nickname upon join. Your nickname is {second}"
+            )]
+        );
+    }
+
+    #[test]
+    fn a_player_the_server_lists_late_is_given_theirs_when_it_does() {
+        let mut rig = joined_rig();
+        // The hook comes before the player is in the server's list.
+        dispatch_player_logged_in(&mut rig.host, &rig.mods, BOB, "Bob");
+        rig.ticks(5);
+        assert_eq!(rig.nickname(BOB), None);
+        rig.host
+            .players
+            .push(NativeServerPlayer::new(BOB, "Bob", 0));
+        rig.host.textures.insert(BOB, own_skin("Bob"));
+        rig.tick();
+        assert!(rig.nickname(BOB).is_some());
+        // One who leaves meanwhile is not waited for.
+        dispatch_player_logged_in(&mut rig.host, &rig.mods, EVE, "Eve");
+        dispatch_player_logged_out(&mut rig.host, &rig.mods, EVE, "Eve");
+        rig.host
+            .players
+            .push(NativeServerPlayer::new(EVE, "Eve", 0));
+        rig.ticks(3);
+        assert_eq!(rig.nickname(EVE), None);
+    }
+
+    #[test]
+    fn nobody_is_nicknamed_on_join_while_the_mod_is_off_or_for_a_bot() {
+        let mut rig = Rig::fresh("enabled = false\n", POOL);
+        rig.join("Bob", BOB, 0);
+        rig.ticks(3);
+        assert_eq!(rig.nickname(BOB), None);
+        rig.set_config("enabled = true\n");
+        let mut bot = NativeServerPlayer::new(CAROL, "Carol", 0);
+        bot.fake = true;
+        rig.host.players.push(bot);
+        dispatch_player_logged_in(&mut rig.host, &rig.mods, CAROL, "Carol");
+        rig.join("Eve", EVE, 0);
+        rig.ticks(3);
+        assert_eq!(
+            rig.nickname(CAROL),
+            None,
+            "a bot has no client to show it to"
+        );
+        assert!(rig.nickname(EVE).is_some());
+    }
+
+    #[test]
+    fn a_pool_that_cannot_give_a_name_leaves_the_player_as_they_are_and_says_so_in_the_log() {
+        let mut rig = Rig::fresh("", "");
+        rig.join("Bob", BOB, 0);
+        rig.ticks(3);
+        assert_eq!(rig.nickname(BOB), None);
+        assert!(rig.host.told_to(BOB).is_empty());
+        assert!(
+            rig.host
+                .logged()
+                .iter()
+                .any(|l| l
+                    == "INFO: Nick: (on join) The pool is empty: add names with /nick pool add")
+        );
+    }
+
+    #[test]
+    fn the_setting_is_asked_with_no_word_and_a_wrong_word_is_refused() {
+        let mut rig = joined_rig();
+        assert_eq!(
+            rig.answer(ALICE, "nickonjoin"),
+            ["Random nicknames on join: on (everyone but operators)"]
+        );
+        assert_eq!(
+            rig.answer(ALICE, "/nickonjoin ALL"),
+            ["Random nicknames on join set to all (everyone, operators too)!"]
+        );
+        assert_eq!(
+            rig.answer(ALICE, "nickonjoin"),
+            ["Random nicknames on join: all (everyone, operators too)"]
+        );
+        assert_eq!(
+            rig.answer(ALICE, "nickonjoin sometimes"),
+            refused("...sometimes", "Unknown setting: use off, on or all")
+        );
+        assert_eq!(
+            rig.answer(ALICE, "nickonjoin on now"),
+            refused("...oin on now", "Unknown setting: use off, on or all")
+        );
+        assert!(
+            rig.host.logged().contains(
+                &"INFO: Nick: Alice set random nicknames on join to all (everyone, operators too)"
+                    .to_owned()
+            )
+        );
+        // It is not saved: the next start is on again.
+        assert_eq!(rig.nick.state.lock().unwrap().on_join, OnJoin::All);
+    }
+
+    #[test]
+    fn the_command_is_in_the_players_trees_with_its_three_words() {
+        let mut rig = joined_rig();
+        let usages: Vec<String> = rig.registered().into_iter().map(|(u, _, _)| u).collect();
+        for usage in [
+            "nickonjoin",
+            "nickonjoin off",
+            "nickonjoin on",
+            "nickonjoin all",
+        ] {
+            assert!(usages.iter().any(|u| u == usage), "{usage}");
+        }
     }
 
     // ---- completion ----------------------------------------------------------------------

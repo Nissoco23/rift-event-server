@@ -24,6 +24,7 @@ All of it is for operators of level 2 (the console too), or whoever a permission
 | `/nick pool remove <name>` | Takes a name out of the pool. |
 | `/nick pool check [name]` | Alone: how many names the pool has and how many have their skin kept. With a name: whether it is in the pool and its skin. |
 | `/nick reload` | Reads `nick.toml`, `nick-pool.txt` and `nick-skins.json` again. |
+| `/nickonjoin [off\|on\|all]` | Who gets a random nickname as they join: `on` (the default each start) everyone but operators, `all` operators too, `off` no one. Alone, says the setting. The setting is not saved: a server starts with `on`. |
 
 `players` is a name (the real one, or the nickname), `@s`, `@p`, `@r` or `@a`. `@a`, `@p` and `@r`
 skip operators; `admin` is the operators; `@s` and a name reach anyone, operators included. A selector
@@ -45,6 +46,15 @@ with options in brackets is refused. The console has no `@s` or `@p`.
   operators are told.
 
 Every change is logged: `Nick: <operator> set <real name> (<uuid>) to <nickname>`.
+
+### Nicknames on join
+
+With `/nickonjoin` on or all, a player who joins is given a random nickname from the pool once the server
+lists them, and is told: "You have automatically been assigned a nickname upon join. Your nickname is
+`<name>`". Operators are left out unless it is `all`, and so are a mod's bots. A nickname ends when a
+player leaves, so a player who rejoins has none with it off, and is drawn a new one with it on or all.
+Players already online when it is switched are not changed (`/nick random @a` does that). A pool that
+cannot give a name leaves the player as they are and logs why.
 
 ### What a nickname hides, and what it does not
 

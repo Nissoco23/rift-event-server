@@ -5,7 +5,7 @@
 //! a skin is told to whoever ran the command when it comes.
 
 use crate::names;
-use crate::state::{Actor, ClearWhy, Holder, Job, SkinState, State, accent, uuid_string};
+use crate::state::{Actor, ClearWhy, Holder, Job, OnJoin, SkinState, State, accent, uuid_string};
 use horizon_client::mod_api::{Host, NativeCommand, Suggestion};
 use rift_chat::{count, escape, mini};
 
@@ -13,7 +13,7 @@ use rift_chat::{count, escape, mini};
 /// level the config names.
 pub const ADMIN: &str = "nick.admin";
 
-const USAGES: [&str; 12] = [
+const USAGES: [&str; 16] = [
     "nick <name:word>",
     "nick <target:player> <name:word>",
     "nick off [targets:players]",
@@ -26,6 +26,10 @@ const USAGES: [&str; 12] = [
     "nick pool add <name:word>",
     "nick pool remove <name:word?>",
     "nick pool check [name:word?]",
+    "nickonjoin",
+    "nickonjoin off",
+    "nickonjoin on",
+    "nickonjoin all",
 ];
 
 const USAGE: &str = "Usage: /nick <name> | <player> <name> | off [players|admin] | random [players|admin] | info <nickname> | list | pool add|remove|check [name] | reload";
@@ -64,6 +68,8 @@ pub enum Command {
     PoolAdd(String),
     PoolRemove(String),
     PoolCheck(Option<String>),
+    /// `/nickonjoin`: the word typed after it, none to ask the setting.
+    OnJoin(Option<String>),
     /// Our command, said wrongly.
     Usage,
 }
@@ -79,10 +85,14 @@ fn targets(word: &str) -> Targets {
 /// Reads `line` (with or without its slash). None when it is not a `nick` command.
 pub fn parse(line: &str) -> Option<Command> {
     let mut words = line.trim().trim_start_matches('/').split_whitespace();
-    if !words.next()?.eq_ignore_ascii_case("nick") {
+    let head = words.next()?;
+    let args: Vec<&str> = words.collect();
+    if head.eq_ignore_ascii_case("nickonjoin") {
+        return Some(Command::OnJoin((!args.is_empty()).then(|| args.join(" "))));
+    }
+    if !head.eq_ignore_ascii_case("nick") {
         return None;
     }
-    let args: Vec<&str> = words.collect();
     let first = args.first().map(|w| w.to_ascii_lowercase());
     Some(match (first.as_deref(), args.as_slice()) {
         (None, _) => Command::Usage,
@@ -170,6 +180,7 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
         Command::PoolAdd(name) => pool_add(state, host, actor, line, &name),
         Command::PoolRemove(name) => pool_remove(state, host, line, &name),
         Command::PoolCheck(name) => pool_check(state, host, actor, line, name.as_deref()),
+        Command::OnJoin(mode) => on_join(state, host, actor, line, mode.as_deref()),
         Command::Usage => refuse(host, line, words(line), &escape(USAGE)),
     }
     true
@@ -206,7 +217,7 @@ fn select(
     match spec.to_ascii_lowercase().as_str() {
         "@s" => match actor {
             Actor::Player { uuid, .. } => Ok(vec![*uuid]),
-            Actor::Console => Err(no_player),
+            Actor::Console | Actor::Join => Err(no_player),
         },
         "@p" => {
             let Actor::Player { uuid: me, .. } = actor else {
@@ -284,7 +295,9 @@ fn who(
     match targets {
         Targets::Own => match actor {
             Actor::Player { uuid, .. } => Ok(vec![*uuid]),
-            Actor::Console => Err("The console has no nickname: name a player".to_owned()),
+            Actor::Console | Actor::Join => {
+                Err("The console has no nickname: name a player".to_owned())
+            }
         },
         Targets::Admin => {
             let ops: Vec<u128> = state
@@ -460,6 +473,47 @@ fn random(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, tar
     say(
         host,
         &format!("<gray>Choosing random nickname for {for_whom}...</gray>"),
+    );
+}
+
+/// `/nickonjoin`: who gets a random nickname as they join, said or changed.
+fn on_join(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, mode: Option<&str>) {
+    let Some(word) = mode else {
+        let now = state.on_join;
+        return say(
+            host,
+            &format!(
+                "<gray>Random nicknames on join: {} ({})</gray>",
+                accent(now.word()),
+                now.means()
+            ),
+        );
+    };
+    let Some(mode) = OnJoin::parse(word) else {
+        return refuse(
+            host,
+            line,
+            words(line),
+            "Unknown setting: use off, on or all",
+        );
+    };
+    state.on_join = mode;
+    host.log(
+        "INFO",
+        &format!(
+            "Nick: {} set random nicknames on join to {} ({})",
+            actor.label(),
+            mode.word(),
+            mode.means()
+        ),
+    );
+    say(
+        host,
+        &format!(
+            "<white>Random nicknames on join set to {} ({})!</white>",
+            accent(mode.word()),
+            mode.means()
+        ),
     );
 }
 
@@ -812,6 +866,20 @@ mod tests {
     }
 
     #[test]
+    fn nickonjoin_is_read_with_the_word_typed_after_it() {
+        assert_eq!(parse("nickonjoin"), Some(Command::OnJoin(None)));
+        assert_eq!(
+            parse("/NICKONJOIN  all"),
+            Some(Command::OnJoin(Some("all".into())))
+        );
+        // A word is the setting's to judge, so a wrong one is told what is possible.
+        assert_eq!(
+            parse("nickonjoin on now"),
+            Some(Command::OnJoin(Some("on now".into())))
+        );
+    }
+
+    #[test]
     fn a_line_said_wrongly_gets_the_usage() {
         for line in [
             "nick",
@@ -835,7 +903,7 @@ mod tests {
     fn the_command_is_registered_for_operators_of_the_level_and_the_admin_permission() {
         let mut commands = Vec::new();
         register(&mut commands, 3);
-        assert_eq!(commands.len(), 12);
+        assert_eq!(commands.len(), 16);
         for command in &commands {
             assert_eq!(command.level, 3);
             assert_eq!(command.permission.as_deref(), Some("nick.admin"));

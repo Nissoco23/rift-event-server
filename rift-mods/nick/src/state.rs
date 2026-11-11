@@ -26,11 +26,20 @@ const MOST_DRAWS: u32 = 12;
 /// How many times in a row the services may not answer before a random nickname gives up.
 const MOST_SILENCES: u32 = 3;
 
+/// How many ticks a player who joined is waited for before the mod gives up on a nickname for them:
+/// the server lists a player once they are in the world.
+const MOST_JOIN_WAIT: u32 = 200;
+
 /// Who ran a command, for the reports that come after it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Actor {
     Console,
-    Player { uuid: u128, name: String },
+    Player {
+        uuid: u128,
+        name: String,
+    },
+    /// The server itself, giving a player a random nickname as they join (`/nickonjoin`).
+    Join,
 }
 
 impl Actor {
@@ -38,7 +47,44 @@ impl Actor {
         match self {
             Self::Console => "console",
             Self::Player { name, .. } => name,
+            Self::Join => "the server on join",
         }
+    }
+}
+
+/// Who `/nickonjoin` gives a random nickname as they join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnJoin {
+    /// No one.
+    Off,
+    /// Every player but the operators.
+    On,
+    /// Everyone, operators too.
+    All,
+}
+
+impl OnJoin {
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::On => "on",
+            Self::All => "all",
+        }
+    }
+
+    /// What the setting means, for a line that says it.
+    pub fn means(self) -> &'static str {
+        match self {
+            Self::Off => "no one",
+            Self::On => "everyone but operators",
+            Self::All => "everyone, operators too",
+        }
+    }
+
+    pub fn parse(word: &str) -> Option<Self> {
+        [Self::Off, Self::On, Self::All]
+            .into_iter()
+            .find(|mode| mode.word().eq_ignore_ascii_case(word))
     }
 }
 
@@ -222,6 +268,10 @@ pub struct State {
     reserved: HashSet<String>,
     batches: HashMap<u64, Batch>,
     next_batch: u64,
+    /// Who gets a random nickname as they join. Kept for the session: a server starts with it on.
+    pub on_join: OnJoin,
+    /// Players who joined and are waited for until the server lists them, with the ticks waited.
+    joining: Vec<(u128, u32)>,
     rng: Rng,
     ticks: u64,
 }
@@ -251,6 +301,7 @@ pub fn report(host: &mut dyn Host, actor: &Actor, markup: &str) {
             }
         }
         Actor::Console => host.log("INFO", &plain(markup)),
+        Actor::Join => host.log("INFO", &format!("Nick: (on join) {}", plain(markup))),
     }
 }
 
@@ -283,6 +334,8 @@ impl State {
             reserved: HashSet::new(),
             batches: HashMap::new(),
             next_batch: 0,
+            on_join: OnJoin::On,
+            joining: Vec::new(),
             rng,
             ticks: 0,
         }
@@ -366,7 +419,7 @@ impl State {
 
     /// Whether anything waits for the next tick.
     pub fn busy(&self) -> bool {
-        !self.queue.is_empty() || !self.waiting.is_empty()
+        !self.queue.is_empty() || !self.waiting.is_empty() || !self.joining.is_empty()
     }
 
     /// What holds `lower` (a name in lower case): a player on the server, a nickname or a random
@@ -417,6 +470,8 @@ impl State {
             self.roster.joined(uuid, name);
         }
         self.forget(uuid);
+        // Their nickname, if they get one, is drawn once the server lists them (`start_joins`).
+        self.joining.push((uuid, 0));
         let clashing: Vec<u128> = self
             .active
             .iter()
@@ -444,6 +499,7 @@ impl State {
     /// Drops everything held for `uuid`: a nickname, queued work and lookups awaited.
     fn forget(&mut self, uuid: u128) {
         self.active.remove(&uuid);
+        self.joining.retain(|(waiting, _)| *waiting != uuid);
         let (gone, kept): (VecDeque<Job>, VecDeque<Job>) = std::mem::take(&mut self.queue)
             .into_iter()
             .partition(|job| job.uuid() == Some(uuid));
@@ -483,6 +539,7 @@ impl State {
         if self.busy() || self.ticks.is_multiple_of(20) {
             self.roster.replace(&host.server_players());
         }
+        self.start_joins();
         while let Some(job) = self.queue.pop_front() {
             self.run(host, job);
         }
@@ -505,6 +562,36 @@ impl State {
                 "WARN",
                 &format!("Nick: could not keep the pinned skins: {e}"),
             );
+        }
+    }
+
+    /// Queues a random nickname for each player who joined and is now in the server's list, when
+    /// `/nickonjoin` says they get one: not a mod's bot, and an operator only for `all`.
+    fn start_joins(&mut self) {
+        for (uuid, waited) in std::mem::take(&mut self.joining) {
+            let Some((fake, op)) = self
+                .roster
+                .get(uuid)
+                .map(|m| (m.fake, self.config.is_op(m.permission)))
+            else {
+                // Not in the world yet.
+                if waited < MOST_JOIN_WAIT {
+                    self.joining.push((uuid, waited + 1));
+                }
+                continue;
+            };
+            let wanted = match self.on_join {
+                OnJoin::Off => false,
+                OnJoin::On => !op,
+                OnJoin::All => true,
+            };
+            if wanted && !fake && self.config.enabled {
+                self.queue.push_back(Job::Random {
+                    uuid,
+                    actor: Actor::Join,
+                    batch: None,
+                });
+            }
         }
     }
 
@@ -620,7 +707,16 @@ impl State {
             ),
         );
         // The player is told what they are now, unless they are the one who asked.
-        if !matches!(actor, Actor::Player { uuid: by, .. } if *by == uuid) {
+        if *actor == Actor::Join {
+            tell(
+                host,
+                uuid,
+                &format!(
+                    "<gray>You have automatically been assigned a nickname upon join. Your nickname is {}</gray>",
+                    accent(nickname)
+                ),
+            );
+        } else if !matches!(actor, Actor::Player { uuid: by, .. } if *by == uuid) {
             tell(
                 host,
                 uuid,
@@ -829,6 +925,8 @@ impl State {
             .get(uuid)
             .map_or_else(|| uuid_string(uuid), |m| m.name.clone());
         match result {
+            // Told to the player, and in the log, by `set`.
+            Ok(_) if *actor == Actor::Join => {}
             Ok((nickname, skin_ok)) => {
                 report(
                     host,
