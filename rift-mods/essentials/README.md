@@ -11,15 +11,19 @@ A player below that level gets vanilla's "unknown command".
 
 | Command | What it does |
 | --- | --- |
-| `/gmc [player]` | Creative mode for the player, or for you. |
-| `/gms [player]` | Survival mode. |
-| `/gmsp [player]` | Spectator mode. |
-| `/gma [player]` | Adventure mode. |
+| `/gmc [targets]` | Creative mode for the player, or for you. |
+| `/gms [targets]` | Survival mode. |
+| `/gmsp [targets]` | Spectator mode. |
+| `/gma [targets]` | Adventure mode. |
 | `/flyspeed <1-10>` | Your creative flying speed: 1 is vanilla's, 10 the most (0.45, which a player can sprint-fly without the server's moved-too-quickly check sending them back). Above 10 is 10, a decimal goes to the nearest whole speed, and below 1 is an error. |
 
-- `player` is the name the player logged in with, or their nickname, and has to be on the server:
-  "Player was not found" otherwise. Without one the command is for whoever ran it, so the console has to
-  name a player.
+- `targets` is a player's name (the one they logged in with, or their nickname) or a selector: `@s` is
+  you, `@a` everyone online, `@r` one player at random and `@p` the nearest to you in your level (you,
+  when no one is nearer, as in vanilla). A name that is not on the server is "Player was not found". Options
+  in brackets (`@a[distance=..5]`) are refused. Without targets the command is for whoever ran it, so the
+  console has to name a player or use `@a` or `@r`.
+- One player changed is said by name; more than one as "Set 4 players gamemode to creative!". Players
+  already in the mode are left out of the count.
 - A player already in the mode is told so and nothing changes. A player whose mode another operator
   changed is told with vanilla's own line ("Your game mode has been updated to ...").
 - A flying speed is kept by the engine: a respawn or a game mode change keeps it, and it is saved with

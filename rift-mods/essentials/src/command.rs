@@ -2,7 +2,7 @@
 
 use crate::state::{Actor, Job, Mode, State, accent};
 use horizon_client::mod_api::{Host, NativeCommand, NativeServerPlayer};
-use rift_chat::{escape, mini};
+use rift_chat::{count, escape, mini};
 
 /// The permission nodes a permissions mod can grant, and the operator level that counts where none
 /// does: 2, a game master, as vanilla's `/gamemode` needs.
@@ -11,10 +11,10 @@ pub const FLY_SPEED: &str = "essentials.flyspeed";
 const OP_LEVEL: u8 = 2;
 
 const GAME_MODE_USAGES: [&str; 4] = [
-    "gmc [player:player_name]",
-    "gms [player:player_name]",
-    "gmsp [player:player_name]",
-    "gma [player:player_name]",
+    "gmc [targets:players]",
+    "gms [targets:players]",
+    "gmsp [targets:players]",
+    "gma [targets:players]",
 ];
 const FLY_SPEED_USAGE: &str = "flyspeed <speed:number>";
 
@@ -37,7 +37,7 @@ pub enum Command {
     Usage(&'static str),
 }
 
-const MODE_USAGE: &str = "Usage: /<gmc|gms|gmsp|gma> [player]";
+const MODE_USAGE: &str = "Usage: /<gmc|gms|gmsp|gma> [targets]";
 const FLY_USAGE: &str = "Usage: /flyspeed <1-10>";
 
 /// Reads `line` (with or without its slash). None when it is not one of the commands.
@@ -100,31 +100,85 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
     true
 }
 
-/// The player the command is for: the one named (by the name they logged in with, or their
-/// nickname), else whoever ran it. The error is markup, with where in the line it belongs.
-fn player_for(
+/// The player the command is for when it takes no one else: whoever ran it. The error is markup,
+/// with where in the line it belongs.
+fn runner(
     host: &dyn Host,
     actor: &Actor,
     line: &str,
-    named: Option<&str>,
 ) -> Result<NativeServerPlayer, (usize, String)> {
+    match actor {
+        Actor::Player { uuid, .. } => host
+            .server_players()
+            .into_iter()
+            .find(|p| p.uuid == *uuid)
+            .ok_or((words(line), "Player was not found".to_owned())),
+        Actor::Console => Err((words(line), NO_PLAYER.to_owned())),
+    }
+}
+
+const NO_PLAYER: &str = "The console is no player: name one";
+
+/// The players a word names: the name they logged in with or their nickname, `@s` (whoever ran the
+/// command), `@a` (everyone), `@p` (the nearest to whoever ran it, themselves when no one is
+/// nearer, as vanilla has it) or `@r` (one at random). Options in brackets are not read. The error
+/// is markup.
+fn select(
+    state: &mut State,
+    host: &dyn Host,
+    actor: &Actor,
+    spec: &str,
+) -> Result<Vec<NativeServerPlayer>, String> {
+    if spec.contains('[') {
+        return Err(
+            "Selector options are not supported here: use @a, @p, @r, @s or a name".to_owned(),
+        );
+    }
     let players = host.server_players();
-    let found = match (named, actor) {
-        (Some(word), _) => players.into_iter().find(|p| {
-            p.name.eq_ignore_ascii_case(word)
-                || p.nickname
-                    .as_deref()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(word))
-        }),
-        (None, Actor::Player { uuid, .. }) => players.into_iter().find(|p| p.uuid == *uuid),
-        (None, Actor::Console) => {
-            return Err((words(line), "The console is no player: name one".to_owned()));
-        }
+    let own = |players: Vec<NativeServerPlayer>| match actor {
+        Actor::Player { uuid, .. } => players
+            .into_iter()
+            .find(|p| p.uuid == *uuid)
+            .ok_or_else(|| "Player was not found".to_owned()),
+        Actor::Console => Err(NO_PLAYER.to_owned()),
     };
-    found.ok_or((
-        named.map_or(words(line), |_| 2),
-        "Player was not found".to_owned(),
-    ))
+    match spec.to_ascii_lowercase().as_str() {
+        "@s" => own(players).map(|p| vec![p]),
+        "@a" | "@r" if players.is_empty() => Err("No player was found".to_owned()),
+        "@a" => Ok(players),
+        "@r" => {
+            let at = state.pick(players.len());
+            Ok(players.into_iter().nth(at).into_iter().collect())
+        }
+        "@p" => {
+            let me = own(players.clone())?;
+            players
+                .into_iter()
+                .filter(|p| p.dimension == me.dimension)
+                .min_by(|a, b| {
+                    distance(a.position, me.position).total_cmp(&distance(b.position, me.position))
+                })
+                .map(|p| vec![p])
+                .ok_or_else(|| "No player was found".to_owned())
+        }
+        word if word.starts_with('@') => {
+            Err("Only @a, @p, @r and @s are supported here".to_owned())
+        }
+        word => players
+            .into_iter()
+            .find(|p| {
+                p.name.eq_ignore_ascii_case(word)
+                    || p.nickname
+                        .as_deref()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(word))
+            })
+            .map(|p| vec![p])
+            .ok_or_else(|| "Player was not found".to_owned()),
+    }
+}
+
+fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
 }
 
 fn game_mode(
@@ -135,42 +189,58 @@ fn game_mode(
     mode: Mode,
     target: Option<&str>,
 ) {
-    let player = match player_for(host, actor, line, target) {
-        Ok(player) => player,
+    let found = match target {
+        Some(spec) => select(state, host, actor, spec).map_err(|why| (2, why)),
+        None => runner(host, actor, line).map(|p| vec![p]),
+    };
+    let found = match found {
+        Ok(found) => found,
         Err((at, why)) => return refuse(host, line, at, &why),
     };
-    let own = matches!(actor, Actor::Player { uuid, .. } if *uuid == player.uuid);
-    let (who, whose) = if own {
-        ("You are".to_owned(), "your".to_owned())
-    } else {
-        (
-            format!("{} is", accent(&player.name)),
-            format!("{}'s", accent(&player.name)),
-        )
-    };
-    if player.game_mode == mode.id() {
-        return say(
-            host,
-            &format!("<gray>{who} already in {} mode</gray>", accent(mode.name())),
-        );
-    }
-    state.push(Job::GameMode {
-        uuid: player.uuid,
-        name: player.name,
-        mode,
-        actor: actor.clone(),
-    });
-    say(
-        host,
-        &format!(
-            "<white>Set {whose} game mode to {}!</white>",
-            accent(mode.name())
+    // Those already in the mode are left as they are.
+    let changing: Vec<NativeServerPlayer> = found
+        .iter()
+        .filter(|p| p.game_mode != mode.id())
+        .cloned()
+        .collect();
+    let mode_word = accent(mode.name());
+    let own =
+        |p: &NativeServerPlayer| matches!(actor, Actor::Player { uuid, .. } if *uuid == p.uuid);
+    let said = match changing.as_slice() {
+        [] => match found.as_slice() {
+            [p] if own(p) => format!("<gray>You are already in {mode_word} mode</gray>"),
+            [p] => format!(
+                "<gray>{} is already in {mode_word} mode</gray>",
+                accent(&p.name)
+            ),
+            many => format!(
+                "<gray>All {} are already in {mode_word} mode</gray>",
+                accent(&count(many.len(), "player"))
+            ),
+        },
+        [p] if own(p) => format!("<white>Set your game mode to {mode_word}!</white>"),
+        [p] => format!(
+            "<white>Set {}'s game mode to {mode_word}!</white>",
+            accent(&p.name)
         ),
-    );
+        many => format!(
+            "<white>Set {} gamemode to {mode_word}!</white>",
+            accent(&count(many.len(), "player"))
+        ),
+    };
+    for p in changing {
+        state.push(Job::GameMode {
+            uuid: p.uuid,
+            name: p.name,
+            mode,
+            actor: actor.clone(),
+        });
+    }
+    say(host, &said);
 }
 
 fn fly_speed(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, typed: &str) {
-    let player = match player_for(host, actor, line, None) {
+    let player = match runner(host, actor, line) {
         Ok(player) => player,
         Err((at, why)) => return refuse(host, line, at, &why),
     };
@@ -192,7 +262,7 @@ fn fly_speed(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, 
     say(
         host,
         &format!(
-            "<white>Set your flight speed to {} of 10!</white>",
+            "<white>Set your flight speed to {}!</white>",
             accent(&level.to_string())
         ),
     );
@@ -254,10 +324,7 @@ mod tests {
                 .find(|c| c.usage == usage)
                 .and_then(|c| c.permission.clone())
         };
-        assert_eq!(
-            node("gmsp [player:player_name]").as_deref(),
-            Some(GAME_MODE)
-        );
+        assert_eq!(node("gmsp [targets:players]").as_deref(), Some(GAME_MODE));
         assert_eq!(node("flyspeed <speed:number>").as_deref(), Some(FLY_SPEED));
     }
 }

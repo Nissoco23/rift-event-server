@@ -114,7 +114,7 @@ impl Rig {
         rig
     }
 
-    fn join(&mut self, name: &str, uuid: u128, permission: u8) {
+    pub fn join(&mut self, name: &str, uuid: u128, permission: u8) {
         self.host
             .players
             .push(NativeServerPlayer::new(uuid, name, permission));
@@ -361,6 +361,149 @@ mod tests {
         ));
     }
 
+    // ---- selectors -----------------------------------------------------------------------
+
+    const DAN: u128 = 0xda4;
+
+    fn crowd() -> Rig {
+        let mut rig = Rig::new();
+        rig.join("Dan", DAN, 0);
+        rig
+    }
+
+    #[test]
+    fn at_a_changes_everyone_and_says_how_many() {
+        let mut rig = crowd();
+        assert_eq!(
+            rig.answer(ALICE, "gmc @a"),
+            ["Set 4 players gamemode to creative!"]
+        );
+        assert!(rig.host.modes.is_empty(), "nothing is done in the command");
+        rig.tick();
+        for who in [ALICE, BOB, EVE, DAN] {
+            assert_eq!(rig.mode_of(who), 1);
+        }
+        // The operator who ran it is not told about their own change; the others are.
+        assert!(rig.host.told_to(ALICE).is_empty());
+        for who in [BOB, EVE, DAN] {
+            assert_eq!(rig.host.told_to(who), ["gameMode.changed"]);
+        }
+    }
+
+    #[test]
+    fn those_already_in_the_mode_are_left_out_of_the_count() {
+        let mut rig = crowd();
+        rig.player(BOB).game_mode = 3;
+        rig.player(EVE).game_mode = 3;
+        assert_eq!(
+            rig.run(ALICE, "gmsp @a"),
+            ["Set 2 players gamemode to spectator!"]
+        );
+        assert_eq!(
+            rig.host.modes.len(),
+            2,
+            "Bob and Eve were left as they were"
+        );
+        // One left to change is said by name, as a single player is.
+        let mut rig = Rig::new();
+        rig.player(BOB).game_mode = 1;
+        rig.player(EVE).game_mode = 1;
+        assert_eq!(
+            rig.run(ALICE, "gmc @a"),
+            ["Set your game mode to creative!"]
+        );
+        // None left to change.
+        assert_eq!(
+            rig.answer(ALICE, "gmc @a"),
+            ["All 3 players are already in creative mode"]
+        );
+    }
+
+    #[test]
+    fn at_s_is_whoever_ran_it_and_not_the_console() {
+        let mut rig = Rig::new();
+        assert_eq!(rig.run(BOB, "gma @s"), ["Set your game mode to adventure!"]);
+        assert_eq!(rig.mode_of(BOB), 2);
+        assert_eq!(rig.mode_of(ALICE), 0);
+        assert_eq!(
+            rig.console("gma @s"),
+            refused("gma @s", "The console is no player: name one")
+        );
+    }
+
+    #[test]
+    fn at_r_is_one_player_drawn_from_everyone() {
+        let mut rig = crowd();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..40 {
+            for who in [ALICE, BOB, EVE, DAN] {
+                rig.player(who).game_mode = 0;
+            }
+            let said = rig.run(ALICE, "gmc @r");
+            let changed: Vec<u128> = [ALICE, BOB, EVE, DAN]
+                .into_iter()
+                .filter(|who| rig.mode_of(*who) == 1)
+                .collect();
+            assert_eq!(changed.len(), 1, "one player: {said:?}");
+            seen.insert(changed[0]);
+        }
+        assert!(seen.len() > 1, "not always the same one: {seen:?}");
+        // The console can draw one too, there being players.
+        for who in [ALICE, BOB, EVE, DAN] {
+            rig.player(who).game_mode = 1;
+        }
+        assert!(rig.console("gms @r")[0].starts_with("Set "));
+    }
+
+    #[test]
+    fn at_p_is_the_nearest_player_in_the_same_level_to_whoever_ran_it() {
+        let mut rig = crowd();
+        rig.player(ALICE).position = [0.0, 64.0, 0.0];
+        rig.player(BOB).position = [10.0, 64.0, 0.0];
+        rig.player(EVE).position = [3.0, 64.0, 0.0];
+        rig.player(DAN).position = [1.0, 64.0, 1.0];
+        rig.player(DAN).dimension = "minecraft:the_nether".into();
+        // A player is the nearest to themselves, as in vanilla.
+        assert_eq!(
+            rig.run(ALICE, "gmc @p"),
+            ["Set your game mode to creative!"]
+        );
+        assert_eq!(rig.mode_of(ALICE), 1);
+        // From Bob, Eve is nearer than Alice; Dan is in another level.
+        rig.player(BOB).game_mode = 1;
+        let mut far = Rig::new();
+        far.join("Dan", DAN, 0);
+        far.player(ALICE).position = [100.0, 64.0, 0.0];
+        far.player(BOB).position = [0.0, 64.0, 0.0];
+        far.player(EVE).position = [3.0, 64.0, 0.0];
+        far.player(DAN).position = [1.0, 64.0, 0.0];
+        far.player(DAN).dimension = "minecraft:the_end".into();
+        assert_eq!(far.run(BOB, "gmc @p"), ["Set your game mode to creative!"]);
+        assert_eq!(far.mode_of(BOB), 1, "Bob is the nearest to Bob");
+        assert_eq!(
+            far.console("gmc @p"),
+            refused("gmc @p", "The console is no player: name one")
+        );
+    }
+
+    #[test]
+    fn a_selector_that_cannot_be_read_says_what_is_supported() {
+        let mut rig = Rig::new();
+        assert_eq!(
+            rig.answer(ALICE, "gmc @e"),
+            refused("gmc @e", "Only @a, @p, @r and @s are supported here")
+        );
+        assert_eq!(
+            rig.answer(ALICE, "gmc @a[distance=..5]"),
+            refused(
+                "...tance=..5]",
+                "Selector options are not supported here: use @a, @p, @r, @s or a name"
+            )
+        );
+        rig.tick();
+        assert!(rig.host.modes.is_empty());
+    }
+
     // ---- flying speed --------------------------------------------------------------------
 
     fn level_of(speed: f32) -> u32 {
@@ -374,7 +517,7 @@ mod tests {
         let mut rig = Rig::new();
         assert_eq!(
             rig.answer(ALICE, "flyspeed 5"),
-            ["Set your flight speed to 5 of 10!"]
+            ["Set your flight speed to 5!"]
         );
         assert!(rig.host.flying.is_empty(), "nothing is done in the command");
         rig.tick();
@@ -423,7 +566,7 @@ mod tests {
             let said = rig.run(ALICE, &format!("flyspeed {typed}"));
             assert_eq!(
                 said,
-                [format!("Set your flight speed to {level} of 10!")],
+                [format!("Set your flight speed to {level}!")],
                 "{typed}"
             );
             assert_eq!(level_of(rig.host.flying[0].1.unwrap()), level, "{typed}");
@@ -504,10 +647,10 @@ mod tests {
         );
         let usages: Vec<&str> = commands.iter().map(|(u, _, _)| u.as_str()).collect();
         for usage in [
-            "gmc [player:player_name]",
-            "gms [player:player_name]",
-            "gmsp [player:player_name]",
-            "gma [player:player_name]",
+            "gmc [targets:players]",
+            "gms [targets:players]",
+            "gmsp [targets:players]",
+            "gma [targets:players]",
             "flyspeed <speed:number>",
         ] {
             assert!(usages.contains(&usage), "{usage}");
@@ -527,7 +670,7 @@ mod tests {
         let mut rig = Rig::new();
         assert_eq!(
             rig.answer(ALICE, "gmc Bob Eve"),
-            refused("...mc Bob Eve", "Usage: /<gmc|gms|gmsp|gma> [player]")
+            refused("...mc Bob Eve", "Usage: /<gmc|gms|gmsp|gma> [targets]")
         );
     }
 }

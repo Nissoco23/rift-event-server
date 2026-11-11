@@ -81,9 +81,22 @@ pub enum Job {
     },
 }
 
-#[derive(Default)]
 pub struct State {
     queue: VecDeque<Job>,
+    /// The state of the generator `@r` draws from.
+    random: u64,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        Self {
+            queue: VecDeque::new(),
+            random: nanos | 1,
+        }
+    }
 }
 
 /// `text` as markup in the accent colour, escaped.
@@ -114,6 +127,16 @@ fn audit(host: &dyn Host, text: String) {
 impl State {
     pub fn push(&mut self, job: Job) {
         self.queue.push_back(job);
+    }
+
+    /// A number below `below` (more than 0), for `@r`: xorshift64*, which is all a pick of one
+    /// player needs.
+    pub fn pick(&mut self, below: usize) -> usize {
+        self.random ^= self.random >> 12;
+        self.random ^= self.random << 25;
+        self.random ^= self.random >> 27;
+        let drawn = self.random.wrapping_mul(0x2545_F491_4F6C_DD1D) >> 33;
+        (drawn % below as u64) as usize
     }
 
     /// The work of one server tick: every change the commands queued.
