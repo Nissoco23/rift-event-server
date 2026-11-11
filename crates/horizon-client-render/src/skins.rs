@@ -223,7 +223,7 @@ pub use crate::chunk::block_entity::NameOrId;
 
 /// `GameProfile` as `fetchProfile` returns it: the account's id, name and
 /// property map (its `textures` property is the skin).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedProfile {
     pub id: u128,
     pub name: String,
@@ -290,19 +290,37 @@ fn valid_player_name(name: &str) -> bool {
 fn resolve_profile(key: &NameOrId, doc: &serde_json::Value) -> Option<ResolvedProfile> {
     let id = match key {
         NameOrId::Id(id) => *id,
-        NameOrId::Name(name) => {
-            let url = crate::auth::endpoint(doc, "profiles", "getByName")?
-                .replace("{name}", &name.to_lowercase());
-            let body = http_get(&url)?;
-            let v: serde_json::Value = serde_json::from_slice(&body).ok()?;
-            crate::auth::parse_uuid(v.get("id")?.as_str()?)?
-        }
+        NameOrId::Name(name) => parse_name_answer(&http_get(&by_name_url(doc, name)?)?)?,
     };
+    parse_profile_answer(&http_get(&by_id_url(doc, id)?)?)
+}
+
+/// The `getByName` request for `name`: the services take it in lower case.
+fn by_name_url(doc: &serde_json::Value, name: &str) -> Option<String> {
+    Some(
+        crate::auth::endpoint(doc, "profiles", "getByName")?
+            .replace("{name}", &name.to_lowercase()),
+    )
+}
+
+/// The account id in a `getByName` answer.
+fn parse_name_answer(body: &[u8]) -> Option<u128> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    crate::auth::parse_uuid(v.get("id")?.as_str()?)
+}
+
+/// The `getProfileById` request for `id`, asked `unsigned=false` so the
+/// `textures` property is signed.
+fn by_id_url(doc: &serde_json::Value, id: u128) -> Option<String> {
     let url = crate::auth::endpoint(doc, "session", "getProfileById")?
         .replace("{profileId}", &format!("{id:032x}"));
     let separator = if url.contains('?') { '&' } else { '?' };
-    let body = http_get(&format!("{url}{separator}unsigned=false"))?;
-    let v: serde_json::Value = serde_json::from_slice(&body).ok()?;
+    Some(format!("{url}{separator}unsigned=false"))
+}
+
+/// A `getProfileById` answer.
+fn parse_profile_answer(body: &[u8]) -> Option<ResolvedProfile> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     Some(ResolvedProfile {
         id: crate::auth::parse_uuid(v.get("id")?.as_str()?)?,
         name: v.get("name")?.as_str()?.to_owned(),
@@ -789,6 +807,53 @@ pub fn fetch_own_properties(id: u128) -> Vec<(String, String, Option<String>)> {
         .unwrap_or_default()
 }
 
+/// Why [`fetch_profile_by_name`] gave no profile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LookupError {
+    /// Not an account name: 1 to 16 ASCII letters, digits or underscores.
+    InvalidName,
+    /// The services answered that no account has the name.
+    NotFound,
+    /// The services could not be asked, did not answer, answered with an error of their own
+    /// (too many requests, down) or with something that is not a profile.
+    Unavailable,
+}
+
+/// The account called `name` (any capitalisation) as the services answer it: its id, its name as
+/// the account writes it and its properties, the `textures` one signed (`fetchProfile`, through
+/// the discovery document's `getByName` and `getProfileById`). Blocks on the network (the
+/// discovery document once per process, then two requests): call it off the game's thread. A
+/// server uses it to give a player another account's skin.
+pub fn fetch_profile_by_name(name: &str) -> Result<ResolvedProfile, LookupError> {
+    if !valid_account_name(name) {
+        return Err(LookupError::InvalidName);
+    }
+    let doc = crate::auth::discovery().map_err(|_| LookupError::Unavailable)?;
+    lookup_by_name(name, &doc)
+}
+
+/// What an account may be called: 1 to 16 ASCII letters, digits and underscores, which also keeps
+/// the name safe in a request path.
+fn valid_account_name(name: &str) -> bool {
+    (1..=16).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// [`fetch_profile_by_name`] through a discovery document. An account the name lookup found has a
+/// profile, so a profile that does not come is the services failing, not an account missing.
+fn lookup_by_name(name: &str, doc: &serde_json::Value) -> Result<ResolvedProfile, LookupError> {
+    let url = by_name_url(doc, name).ok_or(LookupError::Unavailable)?;
+    let id = match http_fetch(&url) {
+        Fetched::Body(body) => parse_name_answer(&body).ok_or(LookupError::Unavailable)?,
+        Fetched::Missing => return Err(LookupError::NotFound),
+        Fetched::Failed => return Err(LookupError::Unavailable),
+    };
+    let url = by_id_url(doc, id).ok_or(LookupError::Unavailable)?;
+    match http_fetch(&url) {
+        Fetched::Body(body) => parse_profile_answer(&body).ok_or(LookupError::Unavailable),
+        Fetched::Missing | Fetched::Failed => Err(LookupError::Unavailable),
+    }
+}
+
 /// Where a texture download stands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Download {
@@ -1242,6 +1307,37 @@ fn http_get(url: &str) -> Option<Vec<u8>> {
     Some(body)
 }
 
+/// What a GET came back with.
+enum Fetched {
+    Body(Vec<u8>),
+    /// The service says there is no such thing: 404, or an empty 204 (the older name lookup).
+    Missing,
+    /// No answer, or any other status, or a body that did not come through.
+    Failed,
+}
+
+/// [`http_get`] that tells an answer that says "not here" from one that did not come.
+fn http_fetch(url: &str) -> Fetched {
+    use std::io::Read;
+    let response = match ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(15))
+        .user_agent("Java")
+        .build()
+        .get(url)
+        .call()
+    {
+        Ok(response) if response.status() == 204 => return Fetched::Missing,
+        Ok(response) => response,
+        Err(ureq::Error::Status(404, _)) => return Fetched::Missing,
+        Err(_) => return Fetched::Failed,
+    };
+    let mut body = Vec::new();
+    match response.into_reader().take(16 << 20).read_to_end(&mut body) {
+        Ok(_) => Fetched::Body(body),
+        Err(_) => Fetched::Failed,
+    }
+}
+
 /// SHA-1 (FIPS 180-4).
 pub fn sha1(data: &[u8]) -> [u8; 20] {
     use sha1::{Digest, Sha1};
@@ -1568,6 +1664,127 @@ mod tests {
             "session": {"endpoints": {"getProfileById": {"uri": format!("{base}/session/minecraft/profile/{{profileId}}")}}},
         }});
         assert!(super::resolve_profile(&super::NameOrId::Name("Notch".into()), &doc).is_none());
+    }
+
+    /// A lookup by name tells an account that is not there from services that did not answer, which
+    /// the server needs to say "no such account" or "try again".
+    #[test]
+    fn a_lookup_by_name_tells_a_missing_account_from_services_that_failed() {
+        use super::{LookupError, fetch_profile_by_name, lookup_by_name};
+        use std::io::{BufRead, BufReader, Write};
+        const NOTCH: &str = "069a79f444e94726a5befca90e38aaf5";
+        const LOST: &str = "00000000000000000000000000000001";
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen = requests.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let mut stream = stream.unwrap();
+                let mut line = String::new();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                reader.read_line(&mut line).unwrap();
+                while reader.read_line(&mut String::new()).unwrap() > 2 {}
+                let target = line.split(' ').nth(1).unwrap_or_default().to_owned();
+                seen.lock().unwrap().push(target.clone());
+                let (status, body) = match target.as_str() {
+                    "/users/profiles/minecraft/notch" => {
+                        ("200 OK", format!(r#"{{"id":"{NOTCH}","name":"Notch"}}"#))
+                    }
+                    "/users/profiles/minecraft/nobody" => (
+                        "404 Not Found",
+                        r#"{"errorMessage":"Couldn't find any profile with name nobody"}"#.into(),
+                    ),
+                    "/users/profiles/minecraft/gone" => ("204 No Content", String::new()),
+                    "/users/profiles/minecraft/limited" => ("429 Too Many Requests", "{}".into()),
+                    "/users/profiles/minecraft/garbled" => ("200 OK", "not json".into()),
+                    "/users/profiles/minecraft/lost" => {
+                        ("200 OK", format!(r#"{{"id":"{LOST}","name":"Lost"}}"#))
+                    }
+                    t if t == format!("/session/minecraft/profile/{NOTCH}?unsigned=false") => (
+                        "200 OK",
+                        format!(
+                            r#"{{"id":"{NOTCH}","name":"Notch","properties":[{{"name":"textures","value":"dmFsdWU=","signature":"c2ln"}}]}}"#
+                        ),
+                    ),
+                    // The account the name lookup found has no profile to give.
+                    _ => ("404 Not Found", "{}".into()),
+                };
+                let reply = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(reply.as_bytes()).unwrap();
+            }
+        });
+        let doc = serde_json::json!({"discovery": {
+            "profiles": {"endpoints": {"getByName": {"uri": format!("{base}/users/profiles/minecraft/{{name}}")}}},
+            "session": {"endpoints": {"getProfileById": {"uri": format!("{base}/session/minecraft/profile/{{profileId}}")}}},
+        }});
+
+        // Asked in lower case, answered with the name as the account writes it, the signed skin
+        // among its properties.
+        let notch = lookup_by_name("NOTCH", &doc).unwrap();
+        assert_eq!(notch.id, 0x069a_79f4_44e9_4726_a5be_fca9_0e38_aaf5);
+        assert_eq!(notch.name, "Notch");
+        assert_eq!(
+            notch.textures(),
+            Some(("dmFsdWU=".to_owned(), super::Signature::Signed))
+        );
+        assert_eq!(lookup_by_name("Nobody", &doc), Err(LookupError::NotFound));
+        assert_eq!(lookup_by_name("Gone", &doc), Err(LookupError::NotFound));
+        for failing in ["Limited", "Garbled", "Lost"] {
+            assert_eq!(
+                lookup_by_name(failing, &doc),
+                Err(LookupError::Unavailable),
+                "{failing}"
+            );
+        }
+        assert_eq!(
+            *requests.lock().unwrap(),
+            [
+                "/users/profiles/minecraft/notch".to_owned(),
+                format!("/session/minecraft/profile/{NOTCH}?unsigned=false"),
+                "/users/profiles/minecraft/nobody".into(),
+                "/users/profiles/minecraft/gone".into(),
+                "/users/profiles/minecraft/limited".into(),
+                "/users/profiles/minecraft/garbled".into(),
+                "/users/profiles/minecraft/lost".into(),
+                format!("/session/minecraft/profile/{LOST}?unsigned=false"),
+            ]
+        );
+        // Services nobody listens at, and a document without the endpoint.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let dead = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        let unreachable = serde_json::json!({"discovery": {
+            "profiles": {"endpoints": {"getByName": {"uri": format!("{dead}/users/{{name}}")}}},
+        }});
+        assert_eq!(
+            lookup_by_name("Notch", &unreachable),
+            Err(LookupError::Unavailable)
+        );
+        let none = serde_json::json!({"discovery": {"profiles": {"endpoints": {}}}});
+        assert_eq!(
+            lookup_by_name("Notch", &none),
+            Err(LookupError::Unavailable)
+        );
+        // Not an account name: refused before anything is asked, and a name never reaches the
+        // path of a request.
+        for bad in [
+            "",
+            "has space",
+            "seventeen_chars_xx",
+            "a/b",
+            "x?y",
+            "n\u{e9}",
+        ] {
+            assert_eq!(
+                fetch_profile_by_name(bad).unwrap_err(),
+                LookupError::InvalidName,
+                "{bad:?}"
+            );
+        }
     }
 
     /// More skins drawn every frame than there are slots (#3829): a frame's
