@@ -5,10 +5,9 @@
 //! a skin is told to whoever ran the command when it comes.
 
 use crate::names;
-use crate::state::{
-    AQUA, Actor, ClearWhy, GRAY, GREEN, Holder, Job, RED, SkinState, State, uuid_string,
-};
-use horizon_client::mod_api::{Host, NativeCommand, Suggestion, Text};
+use crate::state::{Actor, ClearWhy, Holder, Job, SkinState, State, accent, uuid_string};
+use horizon_client::mod_api::{Host, NativeCommand, Suggestion};
+use rift_chat::{count, escape, mini};
 
 /// Who may run the command: the permission node a permissions mod can grant, or an operator of the
 /// level the config names.
@@ -117,8 +116,30 @@ pub fn parse(line: &str) -> Option<Command> {
     })
 }
 
-fn say(host: &mut dyn Host, text: impl Into<String>, color: u32) {
-    host.feedback(Text::colored(text.into(), color));
+/// A line of markup (`rift_chat`) to whoever ran the command.
+fn say(host: &mut dyn Host, markup: &str) {
+    host.feedback(mini(markup));
+}
+
+/// A command that cannot be run: the header, then the typed command up to the `at`th word, which
+/// is the one at fault, and why.
+fn refuse(host: &mut dyn Host, line: &str, at: usize, markup: &str) {
+    let [header, context] = rift_chat::error(line, at, markup);
+    host.feedback(header);
+    host.feedback(context);
+}
+
+/// How many words `line` has.
+fn words(line: &str) -> usize {
+    line.split_whitespace().count()
+}
+
+/// Where the targets of `nick off|random <targets>` are in the line: the third word.
+fn targets_at(line: &str, targets: &Targets) -> usize {
+    match targets {
+        Targets::Own => words(line),
+        _ => 3,
+    }
 }
 
 /// Runs `line` as `actor`. Whether it was a `nick` command.
@@ -129,24 +150,27 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
     // The players as they are now: the command runs where the server's list is in reach.
     state.roster.replace(&host.server_players());
     if !state.config.enabled && command != Command::Reload {
-        say(
+        refuse(
             host,
-            "Nicknames are turned off (enabled = false in config/nick.toml). /nick reload reads it again.",
-            GRAY,
+            line,
+            words(line),
+            "Nicknames are turned off (enabled = false in config/nick.toml): <accent><click:run_command:'/nick reload'>/nick reload</click></accent> reads it again",
         );
         return true;
     }
     match command {
-        Command::Set { target, nickname } => set(state, host, actor, target.as_deref(), &nickname),
-        Command::Off(who) => off(state, host, actor, &who),
-        Command::Random(who) => random(state, host, actor, &who),
-        Command::Info(name) => info(state, host, &name),
+        Command::Set { target, nickname } => {
+            set(state, host, actor, line, target.as_deref(), &nickname);
+        }
+        Command::Off(who) => off(state, host, actor, line, &who),
+        Command::Random(who) => random(state, host, actor, line, &who),
+        Command::Info(name) => info(state, host, line, &name),
         Command::List => list(state, host),
         Command::Reload => reload(state, host),
-        Command::PoolAdd(name) => pool_add(state, host, actor, &name),
-        Command::PoolRemove(name) => pool_remove(state, host, &name),
-        Command::PoolCheck(name) => pool_check(state, host, actor, name.as_deref()),
-        Command::Usage => say(host, USAGE, RED),
+        Command::PoolAdd(name) => pool_add(state, host, actor, line, &name),
+        Command::PoolRemove(name) => pool_remove(state, host, line, &name),
+        Command::PoolCheck(name) => pool_check(state, host, actor, line, name.as_deref()),
+        Command::Usage => refuse(host, line, words(line), &escape(USAGE)),
     }
     true
 }
@@ -156,10 +180,18 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
 /// The players a word names: a name or a nickname (a leading `~` is the name chat shows), `@s`,
 /// `@p`, `@r` or `@a`. The two selectors for many players, `@a` and `admin`, skip operators or mean
 /// only them; `@s` and a name are the player whoever they are. Options in brackets are not read.
-fn select(state: &mut State, actor: &Actor, spec: &str, many: bool) -> Result<Vec<u128>, String> {
+/// The errors are markup. `verb` is the command (`off` or `random`) that `@a` points an operator's
+/// way to `admin` with.
+fn select(
+    state: &mut State,
+    actor: &Actor,
+    spec: &str,
+    many: bool,
+    verb: &str,
+) -> Result<Vec<u128>, String> {
     if spec.contains('[') {
         return Err(
-            "Selector options are not supported here: use @a, @p, @r, @s or a name.".to_owned(),
+            "Selector options are not supported here: use @a, @p, @r, @s or a name".to_owned(),
         );
     }
     let ordinary = |state: &State| -> Vec<u128> {
@@ -170,7 +202,7 @@ fn select(state: &mut State, actor: &Actor, spec: &str, many: bool) -> Result<Ve
             .map(|m| m.uuid)
             .collect()
     };
-    let no_player = "The console is no player: name one.".to_owned();
+    let no_player = "The console is no player: name one".to_owned();
     match spec.to_ascii_lowercase().as_str() {
         "@s" => match actor {
             Actor::Player { uuid, .. } => Ok(vec![*uuid]),
@@ -184,7 +216,7 @@ fn select(state: &mut State, actor: &Actor, spec: &str, many: bool) -> Result<Ve
                 .roster
                 .get(*me)
                 .cloned()
-                .ok_or("You are not on the server.")?;
+                .ok_or("You are not on the server")?;
             ordinary(state)
                 .into_iter()
                 .filter(|u| u != me)
@@ -195,30 +227,32 @@ fn select(state: &mut State, actor: &Actor, spec: &str, many: bool) -> Result<Ve
                         .total_cmp(&distance(b.position, here.position))
                 })
                 .map(|m| vec![m.uuid])
-                .ok_or_else(|| "No player was found near you.".to_owned())
+                .ok_or_else(|| "No player was found near you".to_owned())
         }
         "@r" => {
             let candidates = ordinary(state);
             state
                 .pick(&candidates)
                 .map(|u| vec![u])
-                .ok_or_else(|| "No player was found.".to_owned())
+                .ok_or_else(|| "No player was found".to_owned())
         }
         "@a" if many => {
             let all = ordinary(state);
             if all.is_empty() {
-                Err("No player was found: operators are skipped, `admin` means them.".to_owned())
+                Err(format!(
+                    "No player was found: operators are skipped, use <accent><click:run_command:'/nick {verb} admin'>/nick {verb} admin</click></accent> to target them"
+                ))
             } else {
                 Ok(all)
             }
         }
-        "@a" => Err("One player only here: name one, or use @s, @p or @r.".to_owned()),
-        s if s.starts_with('@') => Err("Only @a, @p, @r and @s are supported here.".to_owned()),
+        "@a" => Err("One player only here: name one, or use @s, @p or @r".to_owned()),
+        s if s.starts_with('@') => Err("Only @a, @p, @r and @s are supported here".to_owned()),
         _ => {
             let name = spec.strip_prefix('~').unwrap_or(spec);
             by_name(state, name)
                 .map(|u| vec![u])
-                .ok_or_else(|| format!("{name} is not on the server."))
+                .ok_or_else(|| "Player was not found".to_owned())
         }
     }
 }
@@ -240,13 +274,17 @@ fn by_name(state: &State, name: &str) -> Option<u128> {
     })
 }
 
-/// The players an `off` or a `random` acts on, and whether it is a crowd (`@a`, `admin`), which a
-/// player without a nickname does not make an error of.
-fn who(state: &mut State, actor: &Actor, targets: &Targets) -> Result<(Vec<u128>, bool), String> {
+/// The players an `off` or a `random` acts on; the error is markup.
+fn who(
+    state: &mut State,
+    actor: &Actor,
+    targets: &Targets,
+    verb: &str,
+) -> Result<Vec<u128>, String> {
     match targets {
         Targets::Own => match actor {
-            Actor::Player { uuid, .. } => Ok((vec![*uuid], false)),
-            Actor::Console => Err("The console has no nickname: name a player.".to_owned()),
+            Actor::Player { uuid, .. } => Ok(vec![*uuid]),
+            Actor::Console => Err("The console has no nickname: name a player".to_owned()),
         },
         Targets::Admin => {
             let ops: Vec<u128> = state
@@ -256,15 +294,12 @@ fn who(state: &mut State, actor: &Actor, targets: &Targets) -> Result<(Vec<u128>
                 .map(|m| m.uuid)
                 .collect();
             if ops.is_empty() {
-                Err("No operator is online.".to_owned())
+                Err("No operator is online".to_owned())
             } else {
-                Ok((ops, true))
+                Ok(ops)
             }
         }
-        Targets::Spec(spec) => {
-            let many = spec.eq_ignore_ascii_case("@a");
-            select(state, actor, spec, true).map(|found| (found, many))
-        }
+        Targets::Spec(spec) => select(state, actor, spec, true, verb),
     }
 }
 
@@ -285,40 +320,55 @@ fn set(
     state: &mut State,
     host: &mut dyn Host,
     actor: &Actor,
+    line: &str,
     target: Option<&str>,
     nickname: &str,
 ) {
     let found = match target {
-        None => who(state, actor, &Targets::Own),
-        Some(spec) => select(state, actor, spec, false).map(|found| (found, false)),
+        None => who(state, actor, &Targets::Own, ""),
+        Some(spec) => select(state, actor, spec, false, ""),
     };
     let uuid = match found {
-        Ok((found, _)) => found[0],
-        Err(e) => return say(host, e, RED),
+        Ok(found) => found[0],
+        Err(e) => {
+            let at = if target.is_some() { 2 } else { words(line) };
+            return refuse(host, line, at, &e);
+        }
     };
+    // The nickname is the last word of the line.
+    let at = words(line);
     let real = real_name(state, uuid);
     let (min, max) = (state.config.min_length, state.config.max_length);
     if let Err(e) = names::check(nickname, min, max) {
-        return say(host, e.says(nickname), RED);
+        return refuse(host, line, at, &e.says(nickname));
     }
     // A player's own name is no nickname: it is the same as turning theirs off.
     if real.eq_ignore_ascii_case(nickname) {
-        return off_players(state, host, actor, &[uuid], false);
+        return off_players(state, host, actor, line, at, &[uuid]);
     }
     if host.text_allowed(nickname) == Some(false) {
-        return say(
+        return refuse(
             host,
-            format!("{nickname} is not allowed by the server's chat filter."),
-            RED,
+            line,
+            at,
+            &format!(
+                "{} is not allowed by the server's chat filter",
+                accent(nickname)
+            ),
         );
     }
     if let Some(holder) = state.holder(&nickname.to_ascii_lowercase(), uuid) {
         let why = match holder {
-            Holder::Player(name) => format!("{name} is a player on the server"),
-            Holder::Nickname { real } => format!("{real} has it as a nickname"),
+            Holder::Player(name) => format!("{} is a player on the server", accent(&name)),
+            Holder::Nickname { real } => format!("{} has it as a nickname", accent(&real)),
             Holder::Pending => "a random nickname is about to use it".to_owned(),
         };
-        return say(host, format!("{nickname} is taken: {why}."), RED);
+        return refuse(
+            host,
+            line,
+            at,
+            &format!("{} is taken: {why}", accent(nickname)),
+        );
     }
     state.push(Job::Set {
         uuid,
@@ -326,23 +376,35 @@ fn set(
         actor: actor.clone(),
     });
     let said = if is_self(actor, uuid) {
-        format!("You are now nicknamed {nickname}.")
+        format!("<white>Your nickname is now {}!</white>", accent(nickname))
     } else {
-        format!("{real} is now nicknamed {nickname}.")
+        format!(
+            "<white>Nicknamed {} as {}!</white>",
+            accent(&real),
+            accent(nickname)
+        )
     };
-    say(host, said, GREEN);
+    say(host, &said);
 }
 
-fn off(state: &mut State, host: &mut dyn Host, actor: &Actor, targets: &Targets) {
-    match who(state, actor, targets) {
-        Ok((uuids, crowd)) => off_players(state, host, actor, &uuids, crowd),
-        Err(e) => say(host, e, RED),
+fn off(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, targets: &Targets) {
+    let at = targets_at(line, targets);
+    match who(state, actor, targets, "off") {
+        Ok(uuids) => off_players(state, host, actor, line, at, &uuids),
+        Err(e) => refuse(host, line, at, &e),
     }
 }
 
 /// Takes the nicknames off `uuids`. One player without a nickname is an error; in a crowd the ones
-/// without are left alone, and only a crowd without any nickname is.
-fn off_players(state: &mut State, host: &mut dyn Host, actor: &Actor, uuids: &[u128], crowd: bool) {
+/// without are left alone, and only a crowd without any is.
+fn off_players(
+    state: &mut State,
+    host: &mut dyn Host,
+    actor: &Actor,
+    line: &str,
+    at: usize,
+    uuids: &[u128],
+) {
     let nicknamed: Vec<u128> = uuids
         .iter()
         .copied()
@@ -350,11 +412,14 @@ fn off_players(state: &mut State, host: &mut dyn Host, actor: &Actor, uuids: &[u
         .collect();
     if nicknamed.is_empty() {
         let said = match uuids {
-            [uuid] if is_self(actor, *uuid) => "You do not have a nickname set.".to_owned(),
-            [uuid] => format!("{} does not have a nickname set.", real_name(state, *uuid)),
-            _ => "None of them has a nickname set.".to_owned(),
+            [uuid] if is_self(actor, *uuid) => "You do not have a nickname set".to_owned(),
+            [uuid] => format!(
+                "{} does not have a nickname set",
+                accent(&real_name(state, *uuid))
+            ),
+            _ => "None of them has a nickname set".to_owned(),
         };
-        return say(host, said, RED);
+        return refuse(host, line, at, &said);
     }
     for uuid in &nicknamed {
         state.push(Job::Clear {
@@ -363,40 +428,39 @@ fn off_players(state: &mut State, host: &mut dyn Host, actor: &Actor, uuids: &[u
             why: ClearWhy::Asked,
         });
     }
-    let said = match nicknamed.as_slice() {
-        [uuid] if !crowd && is_self(actor, *uuid) => "Your nickname is off.".to_owned(),
-        [uuid] => {
-            let nickname = state.active[uuid].nickname.clone();
-            format!(
-                "{}'s nickname ({nickname}) is off.",
-                real_name(state, *uuid)
-            )
-        }
-        many => format!("Turned off {} nicknames.", many.len()),
-    };
-    say(host, said, GREEN);
+    say(
+        host,
+        &format!(
+            "<white>Removed nicknames from {}!</white>",
+            accent(&count(nicknamed.len(), "player"))
+        ),
+    );
 }
 
-fn random(state: &mut State, host: &mut dyn Host, actor: &Actor, targets: &Targets) {
-    let (uuids, _) = match who(state, actor, targets) {
+fn random(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, targets: &Targets) {
+    let at = targets_at(line, targets);
+    let uuids = match who(state, actor, targets, "random") {
         Ok(found) => found,
-        Err(e) => return say(host, e, RED),
+        Err(e) => return refuse(host, line, at, &e),
     };
+    // Several at once are answered once, when all have theirs.
+    let batch = (uuids.len() > 1).then(|| state.new_batch(actor, uuids.len()));
     for uuid in &uuids {
         state.push(Job::Random {
             uuid: *uuid,
             actor: actor.clone(),
+            batch,
         });
     }
-    let said = match uuids.as_slice() {
-        [uuid] if is_self(actor, *uuid) => "Choosing a random nickname for you...".to_owned(),
-        [uuid] => format!(
-            "Choosing a random nickname for {}...",
-            real_name(state, *uuid)
-        ),
-        many => format!("Choosing random nicknames for {} players...", many.len()),
+    let for_whom = match uuids.as_slice() {
+        [uuid] if is_self(actor, *uuid) => "you".to_owned(),
+        [uuid] => escape(&real_name(state, *uuid)),
+        many => count(many.len(), "player"),
     };
-    say(host, said, GRAY);
+    say(
+        host,
+        &format!("<gray>Choosing random nickname for {for_whom}...</gray>"),
+    );
 }
 
 /// Where a nickname's skin stands.
@@ -411,29 +475,37 @@ fn skin_line(active: &crate::state::Active) -> String {
     }
 }
 
-fn info(state: &mut State, host: &mut dyn Host, name: &str) {
+fn info(state: &mut State, host: &mut dyn Host, line: &str, name: &str) {
     let name = name.strip_prefix('~').unwrap_or(name);
     let found = state.active.iter().find(|(_, a)| {
         a.nickname.eq_ignore_ascii_case(name) || a.real_name.eq_ignore_ascii_case(name)
     });
     match found {
         Some((uuid, a)) => {
-            let said = format!(
-                "{} is {} ({}). Nicknamed by {}; skin: {}.",
-                a.nickname,
-                a.real_name,
-                uuid_string(*uuid),
-                a.by,
-                skin_line(a)
+            let who = format!(
+                "<white>{} is {} <gray>({})</gray></white>",
+                accent(&a.nickname),
+                accent(&a.real_name),
+                uuid_string(*uuid)
             );
-            say(host, said, AQUA);
+            let how = format!(
+                "<gray>Nicknamed by {}, skin: {}</gray>",
+                escape(&a.by),
+                escape(&skin_line(a))
+            );
+            say(host, &who);
+            say(host, &how);
         }
         None => match state.roster.by_name(name) {
-            Some(m) => say(host, format!("{} is not nicknamed.", m.name), GRAY),
-            None => say(
+            Some(m) => say(
                 host,
-                format!("No player is nicknamed or called {name}."),
-                GRAY,
+                &format!("<gray>{} is not nicknamed</gray>", accent(&m.name)),
+            ),
+            None => refuse(
+                host,
+                line,
+                words(line),
+                &format!("No player is nicknamed or called {}", accent(name)),
             ),
         },
     }
@@ -441,30 +513,36 @@ fn info(state: &mut State, host: &mut dyn Host, name: &str) {
 
 fn list(state: &mut State, host: &mut dyn Host) {
     if state.active.is_empty() {
-        return say(host, "No one is nicknamed.", GRAY);
+        return say(host, "<gray>No one is nicknamed</gray>");
     }
     say(
         host,
-        format!("Nicknames in force ({}):", state.active.len()),
-        AQUA,
+        &format!(
+            "<white>Nicknames in force: {}</white>",
+            accent(&state.active.len().to_string())
+        ),
     );
-    let mut lines: Vec<String> = state
+    let mut rows: Vec<(String, String)> = state
         .active
         .iter()
         .map(|(uuid, a)| {
-            format!(
-                "{} = {} ({}), by {}, skin: {}",
-                a.nickname,
-                a.real_name,
-                uuid_string(*uuid),
-                a.by,
-                skin_line(a)
+            (
+                a.nickname.to_ascii_lowercase(),
+                format!(
+                    "<click:run_command:'/nick info {nick}'>{shown}</click> <gray>= {real} ({uuid}), by {by}, skin: {skin}</gray>",
+                    nick = a.nickname,
+                    shown = accent(&a.nickname),
+                    real = escape(&a.real_name),
+                    uuid = uuid_string(*uuid),
+                    by = escape(&a.by),
+                    skin = escape(&skin_line(a))
+                ),
             )
         })
         .collect();
-    lines.sort_by_key(|l| l.to_ascii_lowercase());
-    for line in lines {
-        say(host, line, GRAY);
+    rows.sort();
+    for (_, row) in rows {
+        say(host, &row);
     }
 }
 
@@ -473,48 +551,62 @@ fn reload(state: &mut State, host: &mut dyn Host) {
         Ok(notes) => {
             say(
                 host,
-                format!(
-                    "Nick config reloaded: {} names in the pool, {} skins kept.",
-                    state.pool.len(),
-                    state.skins.pinned_count()
+                &format!(
+                    "<white>Reloaded the {} config: {} in the pool, {} kept!</white>",
+                    accent("nick"),
+                    accent(&count(state.pool.len(), "name")),
+                    accent(&count(state.skins.pinned_count(), "skin"))
                 ),
-                AQUA,
             );
             for note in notes {
                 host.log("WARN", &format!("Nick: {note}"));
-                say(host, note, GRAY);
+                say(host, &format!("<gray>{}</gray>", escape(&note)));
             }
         }
         Err(e) => {
             host.log("WARN", &format!("Nick: could not read the files: {e}"));
             say(
                 host,
-                format!("Could not read the files, keeping the old ones: {e}"),
-                RED,
+                &format!(
+                    "<red>Could not read the files, keeping the old ones: {}</red>",
+                    escape(&e.to_string())
+                ),
             );
         }
     }
 }
 
-fn pool_add(state: &mut State, host: &mut dyn Host, actor: &Actor, name: &str) {
+const NOT_AN_ACCOUNT: &str = "is not an account name: 1 to 16 letters, digits or underscores";
+
+fn pool_add(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, name: &str) {
     if !names::is_account_name(name) {
-        return say(
+        return refuse(
             host,
-            format!("{name} is not an account name: 1 to 16 letters, digits or underscores."),
-            RED,
+            line,
+            words(line),
+            &format!("{} {NOT_AN_ACCOUNT}", accent(name)),
         );
     }
     if let Some(known) = state.pool.find(name) {
-        return say(host, format!("{known} is in the pool already."), GRAY);
+        return say(
+            host,
+            &format!("<gray>{} is in the pool already</gray>", accent(known)),
+        );
     }
     state.push(Job::PoolAdd {
         name: name.to_owned(),
         actor: actor.clone(),
     });
-    say(host, format!("Checking that {name} is an account..."), GRAY);
+    say(
+        host,
+        &format!(
+            "<gray>Checking that {} is an account...</gray>",
+            accent(name)
+        ),
+    );
 }
 
-fn pool_remove(state: &mut State, host: &mut dyn Host, name: &str) {
+fn pool_remove(state: &mut State, host: &mut dyn Host, line: &str, name: &str) {
     let spelled = state.pool.find(name).map(str::to_owned);
     let dir = state.dir.clone();
     match state.pool.remove(&dir, name) {
@@ -522,20 +614,33 @@ fn pool_remove(state: &mut State, host: &mut dyn Host, name: &str) {
             state.skins.unpin(name);
             say(
                 host,
-                format!(
-                    "Removed {} from the pool ({} names left).",
-                    spelled.unwrap_or_else(|| name.to_owned()),
-                    state.pool.len()
+                &format!(
+                    "<white>Removed {} from the pool ({} left)!</white>",
+                    accent(&spelled.unwrap_or_else(|| name.to_owned())),
+                    accent(&count(state.pool.len(), "name"))
                 ),
-                GREEN,
             );
         }
-        Ok(false) => say(host, format!("{name} is not in the pool."), RED),
-        Err(e) => say(host, format!("Could not change the pool: {e}"), RED),
+        Ok(false) => refuse(
+            host,
+            line,
+            words(line),
+            &format!("{} is not in the pool", accent(name)),
+        ),
+        Err(e) => say(
+            host,
+            &format!("<red>Could not change the pool: {}</red>", escape(&e)),
+        ),
     }
 }
 
-fn pool_check(state: &mut State, host: &mut dyn Host, actor: &Actor, name: Option<&str>) {
+fn pool_check(
+    state: &mut State,
+    host: &mut dyn Host,
+    actor: &Actor,
+    line: &str,
+    name: Option<&str>,
+) {
     let Some(name) = name else {
         let pinned = state
             .pool
@@ -545,37 +650,43 @@ fn pool_check(state: &mut State, host: &mut dyn Host, actor: &Actor, name: Optio
             .count();
         let total = state.pool.len();
         let mut said = format!(
-            "The pool has {total} names: {pinned} with their skin kept, {} not looked up yet",
-            total - pinned
+            "<white>The pool has {}: {} with their skin kept, {} not looked up yet</white>",
+            accent(&count(total, "name")),
+            accent(&pinned.to_string()),
+            accent(&(total - pinned).to_string())
         );
         if state.pool.bad() > 0 {
             said.push_str(&format!(
-                ", {} found to be no account this session",
-                state.pool.bad()
+                "\n<gray>{} found to be no account this session</gray>",
+                accent(&count(state.pool.bad(), "name"))
             ));
         }
-        return say(host, said + ".", AQUA);
+        for part in said.split('\n') {
+            say(host, part);
+        }
+        return;
     };
     if !names::is_account_name(name) {
-        return say(
+        return refuse(
             host,
-            format!("{name} is not an account name: 1 to 16 letters, digits or underscores."),
-            RED,
+            line,
+            words(line),
+            &format!("{} {NOT_AN_ACCOUNT}", accent(name)),
         );
     }
     if let Some(skin) = state.skins.pinned(name) {
         let said = format!(
-            "{} is in the pool; its skin is kept (the account {}).",
-            state.pool.find(name).unwrap_or(name),
-            skin.account
+            "<gray>{} is in the pool; its skin is kept (the account {})</gray>",
+            accent(state.pool.find(name).unwrap_or(name)),
+            accent(&skin.account)
         );
-        return say(host, said, GRAY);
+        return say(host, &said);
     }
     state.push(Job::PoolCheck {
         name: name.to_owned(),
         actor: actor.clone(),
     });
-    say(host, format!("Checking {name}..."), GRAY);
+    say(host, &format!("<gray>Checking {}...</gray>", accent(name)));
 }
 
 /// What `tab_complete_v2` offers for the word being typed after `/nick`, given the words before it:

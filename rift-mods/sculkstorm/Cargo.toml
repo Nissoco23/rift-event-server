@@ -12,6 +12,8 @@ repository.workspace = true
 # The engine's library, for `horizon_client::mod_api`: the server build, as rift-engine has it.
 horizon-client = { path = "../../crates/horizon-client", default-features = false }
 log = "0.4"
+# The look of the mod's messages.
+rift-chat = { path = "../../crates/rift-chat" }
 serde = { version = "1", features = ["derive"] }
 # The mod's own config/sculkstorm.toml.
 toml = "1.1"

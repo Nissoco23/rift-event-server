@@ -12,6 +12,8 @@ repository.workspace = true
 # The engine's library, for `horizon_client::mod_api`: the server build, as rift-engine has it.
 horizon-client = { path = "../../crates/horizon-client", default-features = false }
 serde = { version = "1", features = ["derive"] }
+# The look of the mod's messages.
+rift-chat = { path = "../../crates/rift-chat" }
 # The mod's own config/viewdistance.toml.
 toml = "1.1"
 

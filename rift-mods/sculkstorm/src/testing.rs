@@ -1022,7 +1022,7 @@ mod tests {
         assert!(rig.console("sculkstorm reload"));
         assert_eq!(
             rig.world.feedback.last().unwrap(),
-            "Sculkstorm config reloaded."
+            "Reloaded the Sculkstorm config!"
         );
         assert!(rig.shared.config().pvp);
         let file = rig.dir.join("config").join("sculkstorm.toml");
@@ -1040,20 +1040,50 @@ mod tests {
         assert!(rig.console("sculkstorm reload"));
         assert!(!rig.shared.config().pvp);
         assert!(rig.console("sculkstorm"));
-        assert!(
-            rig.world
-                .feedback
-                .last()
-                .unwrap()
-                .starts_with("Usage: /sculkstorm")
+        assert_eq!(
+            rig.world.feedback[rig.world.feedback.len() - 2..],
+            [
+                "Unknown or incomplete command. See below for error",
+                "sculkstorm<--[Usage: /sculkstorm give <player> | blast <x> <y> <z> [world] | undo | reload]"
+            ]
         );
+    }
+
+    #[test]
+    fn a_player_who_is_not_on_and_a_position_that_is_not_numbers_are_told_where_the_line_went_wrong()
+     {
+        let mut rig = Rig::new(SMALL);
+        assert!(rig.console("sculkstorm give Ja"));
+        assert_eq!(
+            rig.world.feedback,
+            [
+                "Unknown or incomplete command. See below for error",
+                "...rm give Ja<--[Player was not found]"
+            ]
+        );
+        rig.world.feedback.clear();
+        assert!(rig.console("sculkstorm blast a b c"));
+        assert_eq!(
+            rig.world.feedback,
+            [
+                "Unknown or incomplete command. See below for error",
+                "...last a b c<--[The position must be three numbers: /sculkstorm blast <x> <y> <z> [world]]"
+            ]
+        );
+        assert!(rig.shared.state().tasks.is_empty());
     }
 
     #[test]
     fn a_blast_in_a_world_that_does_not_exist_does_nothing_and_says_so() {
         let mut rig = Rig::new(SMALL);
         assert!(rig.console("sculkstorm blast 0 64 0 nowhere"));
-        assert_eq!(rig.world.feedback.last().unwrap(), "Unknown world.");
+        assert_eq!(
+            rig.world.feedback,
+            [
+                "Unknown or incomplete command. See below for error",
+                "...0 nowhere<--[Unknown world]"
+            ]
+        );
         assert_eq!(rig.shared.state().cataclysms(), 0);
         assert!(rig.shared.state().tasks.is_empty());
         // A world named by its name or its dimension is found.
@@ -1063,7 +1093,7 @@ mod tests {
                 .feedback
                 .last()
                 .unwrap()
-                .starts_with("Cataclysm set off at 0 64 0")
+                .starts_with("Set off a cataclysm at 0 64 0")
         );
         assert!(rig.console("sculkstorm blast 0 64 0 minecraft:overworld"));
         assert_eq!(rig.shared.state().cataclysms(), 2);

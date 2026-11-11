@@ -17,6 +17,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The mod's own config/nick.toml.
 toml = "1.1"
+# Chat text in Rift's message style.
+rift-chat = { path = "../../crates/rift-chat" }
 
 [lints]
 workspace = true

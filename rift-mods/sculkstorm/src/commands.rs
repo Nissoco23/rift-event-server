@@ -4,16 +4,12 @@ use crate::SculkStorm;
 use crate::cataclysm::Blast;
 use crate::item;
 use crate::tasks::Task;
-use horizon_client::mod_api::{Host, NativeCommand, NativeServerPlayer, Tag, Text, parse_snbt};
+use horizon_client::mod_api::{Host, NativeCommand, NativeServerPlayer, Tag, parse_snbt};
 
 /// Who may run the command: the permission node the plugin's `plugin.yml` has, or an operator of
 /// level 2 where nothing grants it.
 pub const ADMIN: &str = "sculkstorm.admin";
 const OP_LEVEL: u8 = 2;
-
-const AQUA: u32 = 0x55FFFF;
-const RED: u32 = 0xFF5555;
-const GRAY: u32 = 0xAAAAAA;
 
 const USAGES: [&str; 4] = [
     "sculkstorm give <player:player_name>",
@@ -22,7 +18,8 @@ const USAGES: [&str; 4] = [
     "sculkstorm reload",
 ];
 
-const USAGE: &str = "Usage: /sculkstorm give <player> | blast <x> <y> <z> [world] | undo | reload";
+/// What the command takes, for the error of a line it cannot read.
+const USAGE: &str = "give <player> | blast <x> <y> <z> [world] | undo | reload";
 
 /// The command's usages, for the players' command trees.
 pub fn register(commands: &mut Vec<NativeCommand>) {
@@ -75,8 +72,22 @@ pub fn parse(line: &str) -> Option<Command<'_>> {
     })
 }
 
-fn say(host: &mut dyn Host, text: impl Into<String>, color: u32) {
-    host.feedback(Text::colored(text.into(), color));
+/// A line of markup (`rift_chat`) to whoever ran the command.
+fn say(host: &mut dyn Host, markup: &str) {
+    host.feedback(rift_chat::mini(markup));
+}
+
+/// A command that cannot be run: the header, then the typed command up to the `words`th word,
+/// which is the one at fault, and why.
+fn refuse(host: &mut dyn Host, line: &str, words: usize, markup: &str) {
+    let [header, context] = rift_chat::error(line, words, markup);
+    host.feedback(header);
+    host.feedback(context);
+}
+
+/// How many words `line` has.
+fn words(line: &str) -> usize {
+    line.split_whitespace().count()
 }
 
 /// Runs `line` as `player` (None for the console). Whether it was a `sculkstorm` command.
@@ -90,24 +101,46 @@ pub fn run(
         return false;
     };
     match command {
-        Command::Give(name) => give(host, name),
-        Command::Blast { at, world } => blast(module, host, player, at, world),
+        Command::Give(name) => give(host, line, name),
+        Command::Blast { at, world } => blast(module, host, line, player, at, world),
         Command::Undo => undo(module, host),
         Command::Reload => match module.reload_config(&*host) {
-            Ok(()) => say(host, "Sculkstorm config reloaded.", AQUA),
+            Ok(()) => say(
+                host,
+                "<white>Reloaded the <accent>Sculkstorm</accent> config!</white>",
+            ),
             Err(e) => {
                 host.log(
-                    "warn",
+                    "WARN",
                     &format!("Sculkstorm: could not read the config: {e}"),
                 );
                 say(
                     host,
-                    format!("Could not read the config, keeping the old one: {e}"),
-                    RED,
+                    &format!(
+                        "<red>Could not read the config, keeping the old one: {}</red>",
+                        rift_chat::escape(&e)
+                    ),
                 );
             }
         },
-        Command::BadBlast | Command::Usage => say(host, USAGE, RED),
+        Command::BadBlast => refuse(
+            host,
+            line,
+            words(line),
+            &format!(
+                "The position must be three numbers: <accent>{}</accent>",
+                rift_chat::escape("/sculkstorm blast <x> <y> <z> [world]")
+            ),
+        ),
+        Command::Usage => refuse(
+            host,
+            line,
+            words(line),
+            &format!(
+                "Usage: <accent>/sculkstorm</accent> {}",
+                rift_chat::escape(USAGE)
+            ),
+        ),
     }
     true
 }
@@ -121,20 +154,19 @@ fn dropped_item() -> Option<horizon_client::mod_api::Compound> {
     }
 }
 
-fn give(host: &mut dyn Host, name: &str) {
+fn give(host: &mut dyn Host, line: &str, name: &str) {
     let target = host
         .server_players()
         .into_iter()
         .find(|p| p.name.eq_ignore_ascii_case(name));
     let Some(target) = target else {
-        say(host, "Player not found.", RED);
+        refuse(host, line, words(line), "Player was not found");
         return;
     };
     let Some(stack) = item::create(&*host) else {
         say(
             host,
-            "The scythe could not be made: this server has no netherite hoe.",
-            RED,
+            "<red>The scythe could not be made: this server has no netherite hoe.</red>",
         );
         return;
     };
@@ -146,14 +178,18 @@ fn give(host: &mut dyn Host, name: &str) {
     }
     say(
         host,
-        format!("Gave {} to {}.", item::DISPLAY_NAME, target.name),
-        AQUA,
+        &format!(
+            "<white>Gave the <accent>{}</accent> to <accent>{}</accent>!</white>",
+            item::DISPLAY_NAME,
+            rift_chat::escape(&target.name)
+        ),
     );
 }
 
 fn blast(
     module: &SculkStorm,
     host: &mut dyn Host,
+    line: &str,
     player: Option<&NativeServerPlayer>,
     at: [f64; 3],
     world: Option<&str>,
@@ -170,7 +206,7 @@ fn blast(
         ),
     };
     let Some(dimension) = dimension else {
-        say(host, "Unknown world.", RED);
+        refuse(host, line, words(line), "Unknown world");
         return;
     };
     {
@@ -180,13 +216,12 @@ fn blast(
     }
     say(
         host,
-        format!(
-            "Cataclysm set off at {} {} {}.",
+        &format!(
+            "<white>Set off a cataclysm at <accent>{} {} {}</accent>!</white>",
             at[0].floor() as i64,
             at[1].floor() as i64,
             at[2].floor() as i64
         ),
-        AQUA,
     );
 }
 
@@ -196,15 +231,15 @@ fn undo(module: &SculkStorm, host: &mut dyn Host) {
     if craters == 0 {
         say(
             host,
-            "Nothing to undo: no crater is waiting to be restored.",
-            GRAY,
+            "<gray>Nothing to undo: no crater is waiting to be restored.</gray>",
         );
     } else {
-        let plural = if craters == 1 { "" } else { "s" };
         say(
             host,
-            format!("Undoing {craters} crater{plural}, the land is being put back."),
-            AQUA,
+            &format!(
+                "<white>Undoing <accent>{}</accent>, the land is being put back.</white>",
+                rift_chat::count(craters, "crater")
+            ),
         );
     }
 }

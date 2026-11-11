@@ -30,7 +30,7 @@ use horizon_client::mod_api::{
     LevelDimension, LevelHost, LevelTickPostEvent, LevelTickPreEvent, LivingFallEvent,
     LootDropsEvent, NativeServerPlayer, PerformCommandEvent, PerformConsoleCommandEvent,
     PlayerLoggedInEvent, PlayerLoggedOutEvent, RegisterCommandsEvent, RightClickBlockV2Event,
-    ServerStoppingEvent, ServerTickEvent, ServerTickPhase, Text, UseItemEvent, WorldLifecycleEvent,
+    ServerStoppingEvent, ServerTickEvent, ServerTickPhase, UseItemEvent, WorldLifecycleEvent,
     WorldPhase,
 };
 use rng::Rng;
@@ -46,9 +46,6 @@ const USE: &str = "sculkstorm.use";
 
 /// The id the resource pack is sent under, so a client replaces it rather than stacking a second.
 const PACK_ID: u128 = 0x5c1c_5702_1ce5_4e0a_9b3e_2f7a_6d4c_1a01;
-
-const RED: u32 = 0xFF5555;
-const DARK_AQUA: u32 = 0x00AAAA;
 
 /// The mod: what the engine's executable hands to `horizon_client::entry::main_with`.
 pub struct SculkStorm {
@@ -88,16 +85,19 @@ fn dimension_id(dimension: LevelDimension) -> &'static str {
     }
 }
 
-fn notify(host: &mut dyn Host, player: u128, text: impl Into<String>, color: u32) {
-    host.action_bar(player, Text::colored(text.into(), color));
+/// A line of markup (`rift_chat`) over the player's hotbar.
+fn notify(host: &mut dyn Host, player: u128, markup: &str) {
+    host.action_bar(player, rift_chat::mini(markup));
 }
 
 fn recharging(host: &mut dyn Host, player: u128, ability: &str, left: Duration) {
     notify(
         host,
         player,
-        format!("{ability} recharging: {:.1}s", left.as_secs_f64()),
-        DARK_AQUA,
+        &format!(
+            "<gray>{ability} recharging: <accent>{:.1}s</accent></gray>",
+            left.as_secs_f64()
+        ),
     );
 }
 
@@ -151,7 +151,11 @@ impl SculkStorm {
         }
         let world = host.world_of_dimension(&p.dimension);
         if cfg.is_disabled(&p.dimension, world.as_deref()) {
-            notify(host, p.uuid, "The storm cannot reach this world.", RED);
+            notify(
+                host,
+                p.uuid,
+                "<red>The storm cannot reach this world.</red>",
+            );
             return Flow::Cancel;
         }
         if p.sneaking {
@@ -202,8 +206,7 @@ impl SculkStorm {
                 notify(
                     host,
                     p.uuid,
-                    "The deep dark is already stirring... try again in a moment.",
-                    DARK_AQUA,
+                    "<gray>The deep dark is already stirring... try again in a moment.</gray>",
                 );
                 return;
             }

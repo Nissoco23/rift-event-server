@@ -20,20 +20,22 @@ pub enum NameError {
 }
 
 impl NameError {
-    /// What an operator is told about `name`.
+    /// What an operator is told about `name`, as markup (`rift_chat`), without a final period.
     pub fn says(&self, name: &str) -> String {
+        let name = rift_chat::escape(name);
         match self {
-            Self::Empty => "A nickname cannot be empty.".to_owned(),
+            Self::Empty => "A nickname cannot be empty".to_owned(),
             Self::TooShort { min } => {
-                format!("{name} is too short for a nickname: at least {min} characters.")
+                format!("{name} is too short for a nickname: at least {min} characters")
             }
             Self::TooLong { max } => {
-                format!("{name} is too long for a nickname: at most {max} characters.")
+                format!("{name} is too long for a nickname: at most {max} characters")
             }
             Self::BadCharacter(c) => format!(
-                "{name} cannot be a nickname: {c:?} is not allowed, only letters, digits and underscores are."
+                "{name} cannot be a nickname: {} is not allowed, only letters, digits and underscores are",
+                rift_chat::escape(&format!("{c:?}"))
             ),
-            Self::Reserved => format!("{name} is a /nick word, so it cannot be a nickname."),
+            Self::Reserved => format!("{name} is a /nick word, so it cannot be a nickname"),
         }
     }
 }
@@ -118,13 +120,18 @@ mod tests {
     #[test]
     fn what_an_operator_is_told_names_the_nickname_and_the_rule() {
         assert_eq!(
-            NameError::TooLong { max: 16 }.says("seventeen_chars_x"),
-            "seventeen_chars_x is too long for a nickname: at most 16 characters."
+            rift_chat::plain(&NameError::TooLong { max: 16 }.says("seventeen_chars_x")),
+            "seventeen_chars_x is too long for a nickname: at most 16 characters"
         );
-        assert!(NameError::BadCharacter(' ').says("a b").contains("' '"));
+        assert!(rift_chat::plain(&NameError::BadCharacter(' ').says("a b")).contains("' '"));
         assert_eq!(
-            NameError::Reserved.says("off"),
-            "off is a /nick word, so it cannot be a nickname."
+            rift_chat::plain(&NameError::Reserved.says("off")),
+            "off is a /nick word, so it cannot be a nickname"
+        );
+        // A name with a tag's brackets cannot inject markup.
+        assert_eq!(
+            rift_chat::plain(&NameError::BadCharacter('<').says("<red>x")),
+            "<red>x cannot be a nickname: '<' is not allowed, only letters, digits and underscores are"
         );
     }
 

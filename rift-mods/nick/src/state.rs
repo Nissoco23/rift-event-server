@@ -12,16 +12,12 @@ use crate::pool::Pool;
 use crate::rng::Rng;
 use crate::roster::Roster;
 use crate::skins::{Failure, Lookup, Skin, Skins};
-use horizon_client::mod_api::{Host, Text};
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use horizon_client::mod_api::Host;
+use rift_chat::{count, escape, mini, plain};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-
-pub const GREEN: u32 = 0x55FF55;
-pub const RED: u32 = 0xFF5555;
-pub const GRAY: u32 = 0xAAAAAA;
-pub const AQUA: u32 = 0x55FFFF;
 
 /// How many names `/nick random` tries for one player before it gives up: a name can turn out to
 /// be no account, or to be taken as it is drawn.
@@ -101,6 +97,8 @@ pub enum Job {
     Random {
         uuid: u128,
         actor: Actor,
+        /// The command that asked for several at once, which answers when all are done.
+        batch: Option<u64>,
     },
     PoolAdd {
         name: String,
@@ -121,6 +119,13 @@ impl Job {
             Self::PoolAdd { .. } | Self::PoolCheck { .. } => None,
         }
     }
+
+    fn batch(&self) -> Option<u64> {
+        match self {
+            Self::Random { batch, .. } => *batch,
+            _ => None,
+        }
+    }
 }
 
 /// A lookup somebody waits for.
@@ -138,6 +143,7 @@ enum Task {
         draws: u32,
         silences: u32,
         actor: Actor,
+        batch: Option<u64>,
     },
     PoolAdd {
         lower: String,
@@ -154,6 +160,13 @@ impl Task {
         match self {
             Self::Skin { uuid, .. } | Self::Random { uuid, .. } => Some(*uuid),
             Self::PoolAdd { .. } | Self::PoolCheck { .. } => None,
+        }
+    }
+
+    fn batch(&self) -> Option<u64> {
+        match self {
+            Self::Random { batch, .. } => *batch,
+            _ => None,
         }
     }
 
@@ -178,6 +191,15 @@ pub enum Holder {
     Pending,
 }
 
+/// A command that asked for random nicknames for several players: it answers once, when every
+/// player has had theirs or has not.
+struct Batch {
+    actor: Actor,
+    total: usize,
+    ok: usize,
+    failed: usize,
+}
+
 /// What to do about a nickname's skin when it is set.
 enum Plan {
     /// Look up the account the nickname names.
@@ -198,6 +220,8 @@ pub struct State {
     waiting: Vec<Task>,
     /// The names random nicknames being chosen are going to use, in lower case.
     reserved: HashSet<String>,
+    batches: HashMap<u64, Batch>,
+    next_batch: u64,
     rng: Rng,
     ticks: u64,
 }
@@ -214,18 +238,30 @@ pub fn uuid_string(uuid: u128) -> String {
     )
 }
 
-/// A line to whoever ran a command, now or later: a player is told in chat, the console in the
-/// log.
-pub fn report(host: &mut dyn Host, actor: &Actor, text: impl Into<String>, color: u32) {
-    let text = text.into();
+/// A line of markup (`rift_chat`) to whoever ran a command, now or later: a player is told in
+/// chat, the console in the log.
+pub fn report(host: &mut dyn Host, actor: &Actor, markup: &str) {
     match actor {
         Actor::Player { uuid, .. } => {
-            if !host.tell(*uuid, Text::colored(text.clone(), color)) {
-                host.log("INFO", &format!("Nick: (for {}) {text}", actor.label()));
+            if !host.tell(*uuid, mini(markup)) {
+                host.log(
+                    "INFO",
+                    &format!("Nick: (for {}) {}", actor.label(), plain(markup)),
+                );
             }
         }
-        Actor::Console => host.log("INFO", &text),
+        Actor::Console => host.log("INFO", &plain(markup)),
     }
+}
+
+/// A line of markup to a player of the server: what happened to them.
+fn tell(host: &mut dyn Host, uuid: u128, markup: &str) {
+    host.tell(uuid, mini(markup));
+}
+
+/// `text` as markup in the accent colour, escaped.
+pub fn accent(text: &str) -> String {
+    format!("<accent>{}</accent>", escape(text))
 }
 
 /// The audit line of a change.
@@ -245,6 +281,8 @@ impl State {
             queue: VecDeque::new(),
             waiting: Vec::new(),
             reserved: HashSet::new(),
+            batches: HashMap::new(),
+            next_batch: 0,
             rng,
             ticks: 0,
         }
@@ -304,6 +342,21 @@ impl State {
 
     pub fn push(&mut self, job: Job) {
         self.queue.push_back(job);
+    }
+
+    /// Opens a batch of `total` random nicknames for `actor`; the jobs name its id.
+    pub fn new_batch(&mut self, actor: &Actor, total: usize) -> u64 {
+        self.next_batch += 1;
+        self.batches.insert(
+            self.next_batch,
+            Batch {
+                actor: actor.clone(),
+                total,
+                ok: 0,
+                failed: 0,
+            },
+        );
+        self.next_batch
     }
 
     /// One of `candidates`, chosen at random.
@@ -391,8 +444,21 @@ impl State {
     /// Drops everything held for `uuid`: a nickname, queued work and lookups awaited.
     fn forget(&mut self, uuid: u128) {
         self.active.remove(&uuid);
-        self.queue.retain(|job| job.uuid() != Some(uuid));
+        let (gone, kept): (VecDeque<Job>, VecDeque<Job>) = std::mem::take(&mut self.queue)
+            .into_iter()
+            .partition(|job| job.uuid() == Some(uuid));
+        self.queue = kept;
+        for job in gone {
+            self.batch_left(job.batch());
+        }
         self.drop_tasks(|task| task.uuid() == Some(uuid));
+    }
+
+    /// A player of a batch is gone: the batch no longer waits for them.
+    fn batch_left(&mut self, batch: Option<u64>) {
+        if let Some(batch) = batch.and_then(|id| self.batches.get_mut(&id)) {
+            batch.total = batch.total.saturating_sub(1);
+        }
     }
 
     fn drop_tasks(&mut self, gone: impl Fn(&Task) -> bool) {
@@ -401,9 +467,10 @@ impl State {
             .partition(gone);
         self.waiting = kept;
         for task in gone_tasks {
-            if let Task::Random { candidate, .. } = task {
+            if let Task::Random { candidate, .. } = &task {
                 self.reserved.remove(&candidate.to_ascii_lowercase());
             }
+            self.batch_left(task.batch());
         }
     }
 
@@ -430,6 +497,7 @@ impl State {
                 self.finish(host, &lower, result);
             }
         }
+        self.finish_batches(host);
         if !self.dir.as_os_str().is_empty()
             && let Err(e) = self.skins.flush(&self.dir)
         {
@@ -446,9 +514,11 @@ impl State {
                 uuid,
                 nickname,
                 actor,
-            } => self.set(host, uuid, &nickname, &actor, Plan::Lookup),
+            } => {
+                self.set(host, uuid, &nickname, &actor, Plan::Lookup);
+            }
             Job::Clear { uuid, actor, why } => self.clear(host, uuid, &actor, &why),
-            Job::Random { uuid, actor } => self.draw(host, uuid, actor, 0, 0),
+            Job::Random { uuid, actor, batch } => self.draw(host, uuid, actor, batch, 0, 0),
             Job::PoolAdd { name, actor } => {
                 self.waiting.push(Task::PoolAdd {
                     lower: name.to_ascii_lowercase(),
@@ -468,47 +538,57 @@ impl State {
 
     // ---- setting and clearing ------------------------------------------------------------
 
-    /// Gives `uuid` the nickname: the nickname and the name tag now, and then the skin.
-    fn set(&mut self, host: &mut dyn Host, uuid: u128, nickname: &str, actor: &Actor, plan: Plan) {
+    /// Gives `uuid` the nickname: the nickname and the name tag now, and then the skin. None when
+    /// it was not given (the reason has been told); for a skin in hand (`Plan::Have`), whether
+    /// it went on.
+    fn set(
+        &mut self,
+        host: &mut dyn Host,
+        uuid: u128,
+        nickname: &str,
+        actor: &Actor,
+        plan: Plan,
+    ) -> Option<bool> {
         let Some(member) = self.roster.get(uuid).cloned() else {
             report(
                 host,
                 actor,
-                format!("{nickname} was not given: the player left."),
-                RED,
+                &format!(
+                    "<red>The nickname {} was not given: the player left</red>",
+                    accent(nickname)
+                ),
             );
-            return;
+            return None;
         };
+        let real = accent(&member.name);
         let lower = nickname.to_ascii_lowercase();
         // Taken since the command was typed.
         if let Some(holder) = self.holder(&lower, uuid) {
             let by = match holder {
-                Holder::Player(real) => format!("{real} is on the server"),
-                Holder::Nickname { real } => format!("{real} has it"),
+                Holder::Player(real) => format!("{} is on the server", accent(&real)),
+                Holder::Nickname { real } => format!("{} has it", accent(&real)),
                 Holder::Pending => "a random nickname is about to use it".to_owned(),
             };
             report(
                 host,
                 actor,
-                format!(
-                    "{} keeps their name: {nickname} is taken ({by}).",
-                    member.name
+                &format!(
+                    "<red>{real} keeps their name: {} is taken ({by})</red>",
+                    accent(nickname)
                 ),
-                RED,
             );
-            return;
+            return None;
         }
         if host.text_allowed(nickname) == Some(false) {
             report(
                 host,
                 actor,
-                format!(
-                    "{} keeps their name: {nickname} is not allowed by the chat filter.",
-                    member.name
+                &format!(
+                    "<red>{real} keeps their name: {} is not allowed by the chat filter</red>",
+                    accent(nickname)
                 ),
-                RED,
             );
-            return;
+            return None;
         }
         let first = !self.active.contains_key(&uuid);
         let original = if first {
@@ -521,10 +601,12 @@ impl State {
             report(
                 host,
                 actor,
-                format!("Could not give {} the nickname {nickname}.", member.name),
-                RED,
+                &format!(
+                    "<red>Could not give {real} the nickname {}</red>",
+                    accent(nickname)
+                ),
             );
-            return;
+            return None;
         }
         let random = matches!(plan, Plan::Have(_));
         audit(
@@ -537,6 +619,14 @@ impl State {
                 if random { " (random)" } else { "" }
             ),
         );
+        // The player is told what they are now, unless they are the one who asked.
+        if !matches!(actor, Actor::Player { uuid: by, .. } if *by == uuid) {
+            tell(
+                host,
+                uuid,
+                &format!("<gray>Your nickname is now {}</gray>", accent(nickname)),
+            );
+        }
         let entry = self.active.entry(uuid).or_insert_with(|| Active {
             nickname: String::new(),
             real_name: member.name.clone(),
@@ -557,28 +647,9 @@ impl State {
                     actor: actor.clone(),
                 });
                 self.skins.request(nickname);
+                Some(true)
             }
-            Plan::Have(skin) => {
-                let ok = self.put_on(host, uuid, &skin);
-                let real = member.name;
-                if ok {
-                    report(
-                        host,
-                        actor,
-                        format!("{real} is now nicknamed {nickname}, with {nickname}'s skin."),
-                        GREEN,
-                    );
-                } else {
-                    report(
-                        host,
-                        actor,
-                        format!(
-                            "{real} is now nicknamed {nickname}; the skin could not be changed."
-                        ),
-                        GREEN,
-                    );
-                }
-            }
+            Plan::Have(skin) => Some(self.put_on(host, uuid, &skin)),
         }
     }
 
@@ -621,7 +692,8 @@ impl State {
         done
     }
 
-    /// Takes the player's nickname off, and the skin it gave, back to the one they came with.
+    /// Takes the player's nickname off, and the skin it gave, back to the one they came with, and
+    /// tells them.
     fn clear(&mut self, host: &mut dyn Host, uuid: u128, actor: &Actor, why: &ClearWhy) {
         let Some(entry) = self.active.remove(&uuid) else {
             return;
@@ -657,21 +729,24 @@ impl State {
                 uuid_string(uuid)
             ),
         );
+        tell(host, uuid, "<gray>Your nickname has been removed</gray>");
         if !named || !skinned {
             report(
                 host,
                 actor,
-                format!(
-                    "{}'s nickname could not be taken off completely.",
-                    entry.real_name
+                &format!(
+                    "<red>{}'s nickname could not be taken off completely</red>",
+                    accent(&entry.real_name)
                 ),
-                RED,
             );
         }
         if let ClearWhy::Collision { joiner } = why {
             let told = format!(
-                "{joiner} joined with the name of {}'s nickname, so {} is no longer nicknamed {}.",
-                entry.real_name, entry.real_name, entry.nickname
+                "<gray>{} joined with the name of {}'s nickname, so {} is no longer nicknamed {}</gray>",
+                accent(joiner),
+                accent(&entry.real_name),
+                accent(&entry.real_name),
+                accent(&entry.nickname)
             );
             let ops: Vec<u128> = self
                 .roster
@@ -680,7 +755,7 @@ impl State {
                 .map(|m| m.uuid)
                 .collect();
             for op in ops {
-                host.tell(op, Text::colored(told.clone(), AQUA));
+                tell(host, op, &told);
             }
         }
     }
@@ -688,30 +763,35 @@ impl State {
     // ---- random nicknames ----------------------------------------------------------------
 
     /// Draws a name for the player and asks for its skin; `finish` decides whether it is used.
-    fn draw(&mut self, host: &mut dyn Host, uuid: u128, actor: Actor, draws: u32, silences: u32) {
+    fn draw(
+        &mut self,
+        host: &mut dyn Host,
+        uuid: u128,
+        actor: Actor,
+        batch: Option<u64>,
+        draws: u32,
+        silences: u32,
+    ) {
         let Some(member) = self.roster.get(uuid).cloned() else {
+            self.batch_left(batch);
             return;
         };
+        let real = accent(&member.name);
         if draws >= MOST_DRAWS {
-            report(
-                host,
-                &actor,
-                format!(
-                    "No random nickname could be found for {}: the names drawn were taken or no account. Try again.",
-                    member.name
-                ),
-                RED,
+            let why = format!(
+                "No random nickname could be found for {real}: the names drawn were taken or no account. Try again"
             );
+            self.drew(host, uuid, &actor, batch, Err(Some(why)));
             return;
         }
         let taken = self.taken_names();
         let Some(name) = self.pool.draw(&mut self.rng, &taken) else {
             let why = if self.pool.is_empty() {
-                "The pool is empty: add names with /nick pool add."
+                "The pool is empty: add names with <accent><click:run_command:'/nick pool add '>/nick pool add</click></accent>"
             } else {
-                "Every name in the pool is in use or is no account: add names with /nick pool add."
+                "Every name in the pool is in use or is no account: add names with <accent><click:run_command:'/nick pool add '>/nick pool add</click></accent>"
             };
-            report(host, &actor, why, RED);
+            self.drew(host, uuid, &actor, batch, Err(Some(why.to_owned())));
             return;
         };
         self.reserved.insert(name.to_ascii_lowercase());
@@ -721,8 +801,86 @@ impl State {
             draws: draws + 1,
             silences,
             actor,
+            batch,
         });
         self.skins.request(&name);
+    }
+
+    /// How a random nickname ended: given (and whether its skin went on), or not (with the reason
+    /// to tell, unless it has been told). One asked for alone is answered now; one of a batch is
+    /// counted, and the batch answers when all have ended.
+    fn drew(
+        &mut self,
+        host: &mut dyn Host,
+        uuid: u128,
+        actor: &Actor,
+        batch: Option<u64>,
+        result: Result<(String, bool), Option<String>>,
+    ) {
+        if let Some(batch) = batch.and_then(|id| self.batches.get_mut(&id)) {
+            match result {
+                Ok(_) => batch.ok += 1,
+                Err(_) => batch.failed += 1,
+            }
+            return;
+        }
+        let real = self
+            .roster
+            .get(uuid)
+            .map_or_else(|| uuid_string(uuid), |m| m.name.clone());
+        match result {
+            Ok((nickname, skin_ok)) => {
+                report(
+                    host,
+                    actor,
+                    &format!(
+                        "<white>Assigned random nickname {} to {}!</white>",
+                        accent(&nickname),
+                        accent(&real)
+                    ),
+                );
+                if !skin_ok {
+                    report(host, actor, "<gray>Their skin could not be changed</gray>");
+                }
+            }
+            Err(Some(why)) => report(host, actor, &format!("<red>{why}</red>")),
+            Err(None) => {}
+        }
+    }
+
+    /// Answers the batches whose players have all had their draw end: how many got a nickname.
+    fn finish_batches(&mut self, host: &mut dyn Host) {
+        let done: Vec<u64> = self
+            .batches
+            .iter()
+            .filter(|(_, b)| b.ok + b.failed >= b.total)
+            .map(|(id, _)| *id)
+            .collect();
+        for id in done {
+            let Some(batch) = self.batches.remove(&id) else {
+                continue;
+            };
+            if batch.ok > 0 {
+                report(
+                    host,
+                    &batch.actor,
+                    &format!(
+                        "<white>Assigned random nicknames to {}!</white>",
+                        accent(&count(batch.ok, "player"))
+                    ),
+                );
+            }
+            if batch.failed > 0 {
+                report(
+                    host,
+                    &batch.actor,
+                    &format!(
+                        "<red>{} could not be given one: the pool ran out of free names or Mojang's services did not answer</red>",
+                        accent(&count(batch.failed, "player"))
+                    ),
+                );
+            }
+        }
     }
 
     // ---- answers -------------------------------------------------------------------------
@@ -747,36 +905,41 @@ impl State {
                 draws,
                 silences,
                 actor,
+                batch,
             } => {
                 self.reserved.remove(&candidate.to_ascii_lowercase());
                 match result {
                     Ok(skin) => {
                         // A name of the pool: its skin is kept for good.
                         self.skins.pin(&skin);
-                        if self.roster.get(uuid).is_some() {
-                            let nickname = skin.account.clone();
-                            self.set(host, uuid, &nickname, &actor, Plan::Have(skin));
+                        if self.roster.get(uuid).is_none() {
+                            self.batch_left(batch);
+                            return;
                         }
+                        let nickname = skin.account.clone();
+                        let ended = match self.set(host, uuid, &nickname, &actor, Plan::Have(skin))
+                        {
+                            Some(skin_ok) => Ok((nickname, skin_ok)),
+                            // Told by `set`.
+                            None => Err(None),
+                        };
+                        self.drew(host, uuid, &actor, batch, ended);
                     }
                     Err(Failure::NoAccount) => {
                         self.pool.mark_bad(&candidate);
-                        self.draw(host, uuid, actor, draws, silences);
+                        self.draw(host, uuid, actor, batch, draws, silences);
                     }
                     Err(Failure::Unavailable) => {
                         self.pool.give_back(&candidate);
                         if silences + 1 >= MOST_SILENCES {
                             let real = self.roster.get(uuid).map(|m| m.name.clone());
-                            report(
-                                host,
-                                &actor,
-                                format!(
-                                    "Mojang's services are not answering, so no random nickname could be chosen for {}. Try again in a minute.",
-                                    real.unwrap_or_default()
-                                ),
-                                RED,
+                            let why = format!(
+                                "Mojang's services are not answering, so no random nickname could be chosen for {}. Try again in a minute",
+                                accent(&real.unwrap_or_default())
                             );
+                            self.drew(host, uuid, &actor, batch, Err(Some(why)));
                         } else {
-                            self.draw(host, uuid, actor, draws, silences + 1);
+                            self.draw(host, uuid, actor, batch, draws, silences + 1);
                         }
                     }
                 }
@@ -802,7 +965,7 @@ impl State {
         if !entry.nickname.eq_ignore_ascii_case(lower) {
             return;
         }
-        let real = entry.real_name.clone();
+        let real = accent(&entry.real_name);
         let nickname = entry.nickname.clone();
         if let Some(entry) = self.active.get_mut(&uuid) {
             entry.looking = false;
@@ -824,19 +987,21 @@ impl State {
                     report(
                         host,
                         actor,
-                        format!("{real} now has the skin of {}.", skin.account),
-                        GREEN,
+                        &format!(
+                            "<white>{real} now wears the skin of {}!</white>",
+                            accent(&skin.account)
+                        ),
                     );
                 } else {
                     report(
                         host,
                         actor,
-                        format!("{real} keeps their skin: it could not be changed."),
-                        RED,
+                        &format!("<red>{real} keeps their skin: it could not be changed</red>"),
                     );
                 }
             }
             Err(failure) => {
+                let nickname = accent(&nickname);
                 let why = match failure {
                     Failure::NoAccount => format!("no account is called {nickname}"),
                     Failure::Unavailable => format!(
@@ -846,8 +1011,7 @@ impl State {
                 report(
                     host,
                     actor,
-                    format!("{real} keeps their skin: {why}."),
-                    GRAY,
+                    &format!("<gray>{real} keeps their skin: {why}</gray>"),
                 );
             }
         }
@@ -866,35 +1030,43 @@ impl State {
                     self.skins.pin(&skin);
                     let text = if added {
                         format!(
-                            "{} is in the pool now, with its skin kept ({} names).",
-                            skin.account,
-                            self.pool.len()
+                            "<white>Added {} to the pool, with its skin kept ({} now)!</white>",
+                            accent(&skin.account),
+                            accent(&count(self.pool.len(), "name"))
                         )
                     } else {
-                        format!("{} is in the pool already.", skin.account)
+                        format!(
+                            "<gray>{} is in the pool already</gray>",
+                            accent(&skin.account)
+                        )
                     };
-                    report(host, actor, text, if added { GREEN } else { GRAY });
+                    report(host, actor, &text);
                 }
                 Err(e) => report(
                     host,
                     actor,
-                    format!("{} could not be added: {e}", skin.account),
-                    RED,
+                    &format!(
+                        "<red>{} could not be added: {}</red>",
+                        accent(&skin.account),
+                        escape(&e)
+                    ),
                 ),
             },
             Err(Failure::NoAccount) => report(
                 host,
                 actor,
-                format!("No account is called {lower}: the pool takes only accounts that exist."),
-                RED,
+                &format!(
+                    "<red>No account is called {}: the pool takes only accounts that exist</red>",
+                    accent(lower)
+                ),
             ),
             Err(Failure::Unavailable) => report(
                 host,
                 actor,
-                format!(
-                    "Mojang's services did not answer, so {lower} was not checked or added. Try again."
+                &format!(
+                    "<red>Mojang's services did not answer, so {} was not checked or added. Try again</red>",
+                    accent(lower)
                 ),
-                RED,
             ),
         }
     }
@@ -908,8 +1080,8 @@ impl State {
     ) {
         let in_pool = self.pool.find(lower).map(str::to_owned);
         let membership = match &in_pool {
-            Some(name) => format!("{name} is in the pool"),
-            None => format!("{lower} is not in the pool"),
+            Some(name) => format!("{} is in the pool", accent(name)),
+            None => format!("{} is not in the pool", accent(lower)),
         };
         match result {
             Ok(skin) => {
@@ -919,16 +1091,15 @@ impl State {
                 report(
                     host,
                     actor,
-                    format!(
-                        "{membership}; the account {} exists and its skin is {}.",
-                        skin.account,
+                    &format!(
+                        "<gray>{membership}; the account {} exists and its skin is {}</gray>",
+                        accent(&skin.account),
                         if in_pool.is_some() {
                             "kept"
                         } else {
                             "not kept (not in the pool)"
                         }
                     ),
-                    GRAY,
                 );
             }
             Err(Failure::NoAccount) => {
@@ -938,15 +1109,18 @@ impl State {
                 report(
                     host,
                     actor,
-                    format!("{membership}; no account is called {lower}, so it cannot be used."),
-                    GRAY,
+                    &format!(
+                        "<gray>{membership}; no account is called {}, so it cannot be used</gray>",
+                        accent(lower)
+                    ),
                 );
             }
             Err(Failure::Unavailable) => report(
                 host,
                 actor,
-                format!("{membership}; Mojang's services did not answer, so its skin is unknown."),
-                GRAY,
+                &format!(
+                    "<gray>{membership}; Mojang's services did not answer, so its skin is unknown</gray>"
+                ),
             ),
         }
     }

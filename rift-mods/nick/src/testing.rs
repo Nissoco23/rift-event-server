@@ -506,6 +506,15 @@ mod tests {
         uuids.iter().map(|u| rig.nickname(*u)).collect()
     }
 
+    /// What a refused command answers: the header, then the command as far as the word at fault
+    /// (its last ten characters, after dots, when it is longer) and why, in brackets.
+    fn refused(context: &str, why: &str) -> [String; 2] {
+        [
+            "Unknown or incomplete command. See below for error".to_owned(),
+            format!("{context}<--[{why}]"),
+        ]
+    }
+
     // ---- setting a nickname --------------------------------------------------------------
 
     #[test]
@@ -513,7 +522,7 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.answer(ALICE, "/nick Captain"),
-            ["You are now nicknamed Captain."]
+            ["Your nickname is now Captain!"]
         );
         assert!(
             rig.host.calls.is_empty(),
@@ -535,7 +544,7 @@ mod tests {
         );
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["Alice now has the skin of Captain."]
+            ["Alice now wears the skin of Captain!"]
         );
         assert_eq!(
             rig.host.logged(),
@@ -547,18 +556,19 @@ mod tests {
     }
 
     #[test]
-    fn a_nickname_for_another_player_tells_the_operator_not_the_player() {
+    fn a_nickname_for_another_player_tells_the_operator_and_the_player() {
         let mut rig = Rig::with_players();
-        assert_eq!(
-            rig.answer(ALICE, "nick Bob Rex"),
-            ["Bob is now nicknamed Rex."]
-        );
+        assert_eq!(rig.answer(ALICE, "nick Bob Rex"), ["Nicknamed Bob as Rex!"]);
         rig.tick();
         assert_eq!(rig.host.nicknames[&BOB], "Rex");
         assert_eq!(rig.host.tags[&BOB], "Rex");
         assert_eq!(rig.host.textures[&BOB], skin_of("Rex"));
-        assert_eq!(rig.host.told_to(ALICE), ["Bob now has the skin of Rex."]);
-        assert!(rig.host.told_to(BOB).is_empty());
+        assert_eq!(rig.host.told_to(ALICE), ["Bob now wears the skin of Rex!"]);
+        assert_eq!(
+            rig.host.told_to(BOB),
+            ["Your nickname is now Rex"],
+            "the player is told what they are now, by someone else"
+        );
         assert!(!rig.host.nicknames.contains_key(&ALICE), "only Bob");
     }
 
@@ -596,7 +606,7 @@ mod tests {
         );
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["Bob keeps their skin: no account is called Zork."]
+            ["Bob keeps their skin: no account is called Zork"]
         );
     }
 
@@ -613,7 +623,7 @@ mod tests {
         assert_eq!(
             rig.host.told_to(ALICE),
             [
-                "Bob keeps their skin: Mojang's services did not answer for Captain, so its skin is unknown."
+                "Bob keeps their skin: Mojang's services did not answer for Captain, so its skin is unknown"
             ]
         );
         // They are asked again, and answer, the next time.
@@ -628,51 +638,66 @@ mod tests {
         for nick in ["X", "ab"] {
             assert_eq!(
                 rig.run(ALICE, &format!("nick Bob {nick}")),
-                [format!("Bob is now nicknamed {nick}.")]
+                [format!("Nicknamed Bob as {nick}!")]
             );
             assert_eq!(rig.host.nicknames[&BOB], nick);
         }
         rig.set_config("min-length = 3\n");
         assert_eq!(
             rig.answer(ALICE, "nick Eve ab"),
-            ["ab is too short for a nickname: at least 3 characters."]
+            refused(
+                "...ick Eve ab",
+                "ab is too short for a nickname: at least 3 characters"
+            )
         );
         rig.set_config("max-length = 5\n");
         assert_eq!(
             rig.answer(ALICE, "nick Eve sixsix"),
-            ["sixsix is too long for a nickname: at most 5 characters."]
+            refused(
+                "...Eve sixsix",
+                "sixsix is too long for a nickname: at most 5 characters"
+            )
         );
     }
 
     #[test]
     fn a_nickname_that_does_not_follow_the_conventions_is_refused_and_nothing_happens() {
         let mut rig = Rig::with_players();
-        for (line, said) in [
+        for (line, context, said) in [
             (
                 "nick Bob seventeen_chars_x",
-                "seventeen_chars_x is too long for a nickname: at most 16 characters.",
+                "...en_chars_x",
+                "seventeen_chars_x is too long for a nickname: at most 16 characters",
             ),
             (
                 "nick Bob Cap-tain",
-                "Cap-tain cannot be a nickname: '-' is not allowed, only letters, digits and underscores are.",
+                "...b Cap-tain",
+                "Cap-tain cannot be a nickname: '-' is not allowed, only letters, digits and underscores are",
             ),
             (
                 "nick Bob Capt\u{e9}n",
-                "Capt\u{e9}n cannot be a nickname: '\u{e9}' is not allowed, only letters, digits and underscores are.",
+                "...Bob Capt\u{e9}n",
+                "Capt\u{e9}n cannot be a nickname: '\u{e9}' is not allowed, only letters, digits and underscores are",
             ),
             (
                 "nick Bob Off",
-                "Off is a /nick word, so it cannot be a nickname.",
+                "...ck Bob Off",
+                "Off is a /nick word, so it cannot be a nickname",
             ),
             (
                 "nick Bob RANDOM",
-                "RANDOM is a /nick word, so it cannot be a nickname.",
+                "...Bob RANDOM",
+                "RANDOM is a /nick word, so it cannot be a nickname",
             ),
         ] {
-            assert_eq!(rig.answer(ALICE, line), [said], "{line}");
+            assert_eq!(rig.answer(ALICE, line), refused(context, said), "{line}");
         }
         // Said alone, such a word is the command's: it cannot reach the one-word form.
-        assert!(rig.answer(ALICE, "nick Pool")[0].starts_with("Usage: /nick"));
+        let usage = rig.answer(ALICE, "nick Pool");
+        assert!(
+            usage[1].starts_with("nick Pool<--[Usage: /nick "),
+            "{usage:?}"
+        );
         rig.tick();
         assert!(rig.host.calls.is_empty());
     }
@@ -683,20 +708,23 @@ mod tests {
         rig.host.filter = vec!["bad".into()];
         assert_eq!(
             rig.answer(ALICE, "nick Bob BadName"),
-            ["BadName is not allowed by the server's chat filter."]
+            refused(
+                "...ob BadName",
+                "BadName is not allowed by the server's chat filter"
+            )
         );
         // Out of reach when the command ran: allowed then, asked again by the tick.
         rig.host.filter_out_of_reach = true;
         assert_eq!(
             rig.answer(ALICE, "nick Bob BadName"),
-            ["Bob is now nicknamed BadName."]
+            ["Nicknamed Bob as BadName!"]
         );
         rig.host.filter_out_of_reach = false;
         rig.tick();
         assert!(rig.host.nicknames.is_empty());
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["Bob keeps their name: BadName is not allowed by the chat filter."]
+            ["Bob keeps their name: BadName is not allowed by the chat filter"]
         );
     }
 
@@ -705,17 +733,23 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.answer(ALICE, "nick Bob alice"),
-            ["alice is taken: Alice is a player on the server."]
+            refused(
+                "...Bob alice",
+                "alice is taken: Alice is a player on the server"
+            )
         );
         rig.run(ALICE, "nick Bob Captain");
         assert_eq!(
             rig.answer(ALICE, "nick Eve captain"),
-            ["captain is taken: Bob has it as a nickname."]
+            refused(
+                "...ve captain",
+                "captain is taken: Bob has it as a nickname"
+            )
         );
         // The player's own nickname is theirs to change, even to another capitalisation.
         assert_eq!(
             rig.answer(ALICE, "nick Bob CAPTAIN"),
-            ["Bob is now nicknamed CAPTAIN."]
+            ["Nicknamed Bob as CAPTAIN!"]
         );
     }
 
@@ -729,7 +763,7 @@ mod tests {
         assert!(
             rig.host
                 .told_to(ALICE)
-                .contains(&"Eve keeps their name: Rex is taken (Bob has it).".to_owned())
+                .contains(&"Eve keeps their name: Rex is taken (Bob has it)".to_owned())
         );
     }
 
@@ -738,12 +772,12 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.answer(ALICE, "nick Bob bob"),
-            ["Bob does not have a nickname set."]
+            refused("...ck Bob bob", "Bob does not have a nickname set")
         );
         rig.run(ALICE, "nick Bob Captain");
         assert_eq!(
             rig.answer(ALICE, "nick Bob BOB"),
-            ["Bob's nickname (Captain) is off."]
+            ["Removed nicknames from 1 player!"]
         );
         rig.tick();
         assert_eq!(rig.nickname(BOB), None);
@@ -755,17 +789,20 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.answer(ALICE, "nick Zed Captain"),
-            ["Zed is not on the server."]
+            refused("nick Zed", "Player was not found")
         );
         assert_eq!(
             rig.answer(ALICE, "nick off Zed"),
-            ["Zed is not on the server."]
+            refused("...ck off Zed", "Player was not found")
         );
         rig.host.feedback.clear();
         assert!(rig.console("nick Captain"));
         assert_eq!(
             rig.host.feedback,
-            ["The console has no nickname: name a player."]
+            refused(
+                "...ck Captain",
+                "The console has no nickname: name a player"
+            )
         );
     }
 
@@ -778,7 +815,12 @@ mod tests {
         rig.host.calls.clear();
         assert_eq!(
             rig.run(ALICE, "nick off Bob"),
-            ["Bob's nickname (Captain) is off."]
+            ["Removed nicknames from 1 player!"]
+        );
+        assert_eq!(
+            rig.host.told_to(BOB).last().map(String::as_str),
+            Some("Your nickname has been removed"),
+            "the player is told, whoever took it off"
         );
         assert!(rig.host.nicknames.is_empty() && rig.host.tags.is_empty());
         assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
@@ -836,11 +878,11 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.answer(ALICE, "nick off"),
-            ["You do not have a nickname set."]
+            refused("nick off", "You do not have a nickname set")
         );
         assert_eq!(
             rig.answer(ALICE, "nick off Bob"),
-            ["Bob does not have a nickname set."]
+            refused("...ck off Bob", "Bob does not have a nickname set")
         );
         for typed in ["Bob", "bob", "Captain", "captain", "~Captain"] {
             rig.run(ALICE, "nick Bob Captain");
@@ -850,7 +892,10 @@ mod tests {
         }
         // Their own, with none.
         rig.run(ALICE, "nick Alice Rex");
-        assert_eq!(rig.answer(ALICE, "nick off"), ["Your nickname is off."]);
+        assert_eq!(
+            rig.answer(ALICE, "nick off"),
+            ["Removed nicknames from 1 player!"]
+        );
     }
 
     // ---- who: selectors ------------------------------------------------------------------
@@ -860,16 +905,24 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.run(ALICE, "nick random @a"),
-            ["Choosing random nicknames for 2 players..."]
+            ["Choosing random nickname for 2 players..."]
+        );
+        assert_eq!(
+            rig.host.told_to(ALICE),
+            ["Assigned random nicknames to 2 players!"],
+            "one answer for the whole batch"
         );
         let (bob, eve) = (rig.nickname(BOB).unwrap(), rig.nickname(EVE).unwrap());
         assert_ne!(bob, eve, "two players, two names");
         assert_eq!(rig.nickname(ALICE), None, "operators are skipped");
 
-        assert_eq!(rig.run(ALICE, "nick off @a"), ["Turned off 2 nicknames."]);
+        assert_eq!(
+            rig.run(ALICE, "nick off @a"),
+            ["Removed nicknames from 2 players!"]
+        );
         assert_eq!(
             rig.answer(ALICE, "nick off @a"),
-            ["None of them has a nickname set."]
+            refused("...ick off @a", "None of them has a nickname set")
         );
 
         rig.run(ALICE, "nick random admin");
@@ -879,8 +932,10 @@ mod tests {
             [None, None],
             "admin is the operators"
         );
-        let said = rig.run(ALICE, "nick off admin");
-        assert!(said[0].starts_with("Alice's nickname ("), "{said:?}");
+        assert_eq!(
+            rig.run(ALICE, "nick off admin"),
+            ["Removed nicknames from 1 player!"]
+        );
         assert_eq!(rig.nickname(ALICE), None);
     }
 
@@ -889,7 +944,10 @@ mod tests {
         let mut rig = Rig::with_players();
         rig.run(ALICE, "nick random @s");
         assert!(rig.nickname(ALICE).is_some(), "@s reaches an operator");
-        assert_eq!(rig.answer(ALICE, "nick off @s"), ["Your nickname is off."]);
+        assert_eq!(
+            rig.answer(ALICE, "nick off @s"),
+            ["Removed nicknames from 1 player!"]
+        );
         rig.tick();
         rig.run(ALICE, "nick Alice Captain");
         assert_eq!(rig.nickname(ALICE).as_deref(), Some("Captain"));
@@ -923,7 +981,10 @@ mod tests {
         // From the console there is no one for @p to be near.
         rig.host.feedback.clear();
         assert!(rig.console("nick off @p"));
-        assert_eq!(rig.host.feedback, ["The console is no player: name one."]);
+        assert_eq!(
+            rig.host.feedback,
+            refused("...ick off @p", "The console is no player: name one")
+        );
     }
 
     #[test]
@@ -946,31 +1007,46 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.answer(ALICE, "nick off @e"),
-            ["Only @a, @p, @r and @s are supported here."]
+            refused("...ick off @e", "Only @a, @p, @r and @s are supported here")
         );
         assert_eq!(
             rig.answer(ALICE, "nick off @a[distance=..5]"),
-            ["Selector options are not supported here: use @a, @p, @r, @s or a name."]
+            refused(
+                "...tance=..5]",
+                "Selector options are not supported here: use @a, @p, @r, @s or a name"
+            )
         );
         assert_eq!(
             rig.answer(ALICE, "nick @a Captain"),
-            ["One player only here: name one, or use @s, @p or @r."]
+            refused(
+                "nick @a",
+                "One player only here: name one, or use @s, @p or @r"
+            )
         );
         rig.host.feedback.clear();
         assert!(rig.console("nick @s Captain"));
-        assert_eq!(rig.host.feedback, ["The console is no player: name one."]);
+        assert_eq!(
+            rig.host.feedback,
+            refused("nick @s", "The console is no player: name one")
+        );
         // Only operators online: @a has no one.
         let mut ops = Rig::plain();
         ops.join("Alice", ALICE, 4);
         assert_eq!(
             ops.answer(ALICE, "nick random @a"),
-            ["No player was found: operators are skipped, `admin` means them."]
+            refused(
+                "...random @a",
+                "No player was found: operators are skipped, use /nick random admin to target them"
+            )
         );
         let mut none = Rig::plain();
         none.join("Bob", BOB, 0);
         none.host.feedback.clear();
         assert!(none.console("nick off admin"));
-        assert_eq!(none.host.feedback, ["No operator is online."]);
+        assert_eq!(
+            none.host.feedback,
+            refused("...off admin", "No operator is online")
+        );
     }
 
     #[test]
@@ -999,14 +1075,15 @@ mod tests {
         rig.join("Bob", BOB, 0);
         assert_eq!(
             rig.run(ALICE, "nick random Bob"),
-            ["Choosing a random nickname for Bob..."]
+            ["Choosing random nickname for Bob..."]
         );
         assert_eq!(rig.host.nicknames[&BOB], "Rex");
         assert_eq!(rig.host.textures[&BOB], skin_of("Rex"));
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["Bob is now nicknamed Rex, with Rex's skin."]
+            ["Assigned random nickname Rex to Bob!"]
         );
+        assert_eq!(rig.host.told_to(BOB), ["Your nickname is now Rex"]);
         assert!(rig.host.logged().contains(&format!(
             "INFO: Nick: Alice set Bob ({BOBS_ID}) to Rex (random)"
         )));
@@ -1084,7 +1161,8 @@ mod tests {
         assert_eq!(
             ghosts.answer(ALICE, "nick pool check"),
             [
-                "The pool has 2 names: 1 with their skin kept, 1 not looked up yet, 1 found to be no account this session."
+                "The pool has 2 names: 1 with their skin kept, 1 not looked up yet",
+                "1 name found to be no account this session",
             ]
         );
         let asked = ghosts.lookup.asked_for();
@@ -1109,14 +1187,72 @@ mod tests {
             .collect();
         got.sort();
         assert_eq!(got, ["Rex", "Zed"], "two names for three players");
-        assert!(
-            rig.host
-                .told_to(ALICE)
-                .iter()
-                .any(|l| l
-                    .starts_with("Every name in the pool is in use or is no account: add names")),
-            "{:?}",
-            rig.host.told_to(ALICE)
+        assert_eq!(
+            rig.host.told_to(ALICE),
+            [
+                "Assigned random nicknames to 2 players!",
+                "1 player could not be given one: the pool ran out of free names or Mojang's services did not answer",
+            ],
+            "one answer for the batch, with how many were left out"
+        );
+    }
+
+    #[test]
+    fn a_batch_answers_once_and_each_player_is_told_their_own_nickname() {
+        let mut rig = Rig::new("", "Rex\nZed\nMax\nAda\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        rig.join("Eve", EVE, 0);
+        rig.join("Carol", CAROL, 0);
+        assert_eq!(
+            rig.run(ALICE, "nick random @a"),
+            ["Choosing random nickname for 3 players..."]
+        );
+        assert_eq!(
+            rig.host.told_to(ALICE),
+            ["Assigned random nicknames to 3 players!"]
+        );
+        for player in [BOB, EVE, CAROL] {
+            let told = rig.host.told_to(player);
+            let nickname = rig.nickname(player).unwrap();
+            assert_eq!(told, [format!("Your nickname is now {nickname}")]);
+        }
+        rig.host.told.clear();
+        assert_eq!(
+            rig.run(ALICE, "nick off @a"),
+            ["Removed nicknames from 3 players!"]
+        );
+        for player in [BOB, EVE, CAROL] {
+            assert_eq!(rig.host.told_to(player), ["Your nickname has been removed"]);
+        }
+        // Someone who leaves before their turn is not waited for.
+        rig.host.told.clear();
+        rig.answer(ALICE, "nick random @a");
+        rig.leave(CAROL);
+        rig.tick();
+        assert_eq!(
+            rig.host.told_to(ALICE),
+            ["Assigned random nicknames to 2 players!"]
+        );
+    }
+
+    #[test]
+    fn a_refused_command_reads_as_the_command_so_far_and_what_is_wrong_with_it() {
+        let mut rig = Rig::with_players();
+        // The example of the design: the last ten characters, from the fault.
+        let mut ops = Rig::plain();
+        ops.join("Alice", ALICE, 4);
+        assert_eq!(
+            ops.answer(ALICE, "/nick  random   @a"),
+            refused(
+                "...random @a",
+                "No player was found: operators are skipped, use /nick random admin to target them"
+            ),
+            "folded to single spaces, with no slash"
+        );
+        assert_eq!(
+            rig.answer(ALICE, "nick Zed Rex"),
+            refused("nick Zed", "Player was not found")
         );
     }
 
@@ -1128,7 +1264,7 @@ mod tests {
         rig.run(ALICE, "nick random Bob");
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["The pool is empty: add names with /nick pool add."]
+            ["The pool is empty: add names with /nick pool add"]
         );
         assert_eq!(rig.nickname(BOB), None);
     }
@@ -1144,7 +1280,7 @@ mod tests {
         assert_eq!(
             rig.host.told_to(ALICE),
             [
-                "Mojang's services are not answering, so no random nickname could be chosen for Bob. Try again in a minute."
+                "Mojang's services are not answering, so no random nickname could be chosen for Bob. Try again in a minute"
             ]
         );
         let asked = rig.lookup.asked_for();
@@ -1166,35 +1302,34 @@ mod tests {
     fn info_gives_the_real_identity_by_nickname_or_by_name() {
         let mut rig = Rig::with_players();
         rig.run(ALICE, "nick Bob Captain");
-        let said =
-            format!("Captain is Bob ({BOBS_ID}). Nicknamed by Alice; skin: the skin of Captain.");
-        assert_eq!(rig.answer(ALICE, "nick info Captain"), [said.as_str()]);
-        assert_eq!(rig.answer(ALICE, "nick info captain"), [said.as_str()]);
-        assert_eq!(rig.answer(ALICE, "nick info bob"), [said.as_str()]);
-        assert_eq!(
-            rig.answer(ALICE, "nick info Eve"),
-            ["Eve is not nicknamed."]
-        );
+        let said = [
+            format!("Captain is Bob ({BOBS_ID})"),
+            "Nicknamed by Alice, skin: the skin of Captain".to_owned(),
+        ];
+        assert_eq!(rig.answer(ALICE, "nick info Captain"), said);
+        assert_eq!(rig.answer(ALICE, "nick info captain"), said);
+        assert_eq!(rig.answer(ALICE, "nick info bob"), said);
+        assert_eq!(rig.answer(ALICE, "nick info Eve"), ["Eve is not nicknamed"]);
         assert_eq!(
             rig.answer(ALICE, "nick info Zed"),
-            ["No player is nicknamed or called Zed."]
+            refused("...k info Zed", "No player is nicknamed or called Zed")
         );
         // A nickname with no skin of its own says so.
         rig.run(ALICE, "nick Eve Zork");
-        assert!(rig.answer(ALICE, "nick info Zork")[0].ends_with("skin: their own."));
+        assert!(rig.answer(ALICE, "nick info Zork")[1].ends_with("skin: their own"));
     }
 
     #[test]
     fn list_names_everyone_with_a_nickname() {
         let mut rig = Rig::with_players();
-        assert_eq!(rig.answer(ALICE, "nick list"), ["No one is nicknamed."]);
+        assert_eq!(rig.answer(ALICE, "nick list"), ["No one is nicknamed"]);
         rig.run(ALICE, "nick Bob Captain");
         rig.console("nick Eve Rex");
         rig.tick();
         assert_eq!(
             rig.answer(ALICE, "nick list"),
             [
-                "Nicknames in force (2):".to_owned(),
+                "Nicknames in force: 2".to_owned(),
                 format!("Captain = Bob ({BOBS_ID}), by Alice, skin: the skin of Captain"),
                 "Rex = Eve (00000000-0000-0000-0000-000000000e7e), by console, skin: the skin of Rex"
                     .to_owned(),
@@ -1213,14 +1348,11 @@ mod tests {
         rig.join("Bob", BOB, 0);
         rig.tick();
         assert!(rig.host.nicknames.is_empty());
-        assert_eq!(
-            rig.answer(ALICE, "nick info Bob"),
-            ["Bob is not nicknamed."]
-        );
+        assert_eq!(rig.answer(ALICE, "nick info Bob"), ["Bob is not nicknamed"]);
         assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
         assert_eq!(
             rig.answer(ALICE, "nick off Bob"),
-            ["Bob does not have a nickname set."]
+            refused("...ck off Bob", "Bob does not have a nickname set")
         );
     }
 
@@ -1248,9 +1380,10 @@ mod tests {
         assert!(rig.host.nicknames.is_empty());
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["zed joined with the name of Bob's nickname, so Bob is no longer nicknamed Zed."]
+            ["zed joined with the name of Bob's nickname, so Bob is no longer nicknamed Zed"]
         );
-        assert!(rig.host.told_to(BOB).is_empty() && rig.host.told_to(EVE).is_empty());
+        assert_eq!(rig.host.told_to(BOB), ["Your nickname has been removed"]);
+        assert!(rig.host.told_to(EVE).is_empty());
         assert!(rig.host.logged().iter().any(|l| l
             == &format!(
                 "INFO: Nick: cleared, as zed joined with that name, Bob's nickname Zed ({BOBS_ID})"
@@ -1290,7 +1423,7 @@ mod tests {
         assert_eq!(rig.host.nicknames[&BOB], "Captain");
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["Bob now has the skin of Captain."]
+            ["Bob now wears the skin of Captain!"]
         );
     }
 
@@ -1305,7 +1438,7 @@ mod tests {
         );
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["Notch is in the pool now, with its skin kept (5 names)."]
+            ["Added Notch to the pool, with its skin kept (5 names now)!"]
         );
         let file = std::fs::read_to_string(rig.config_file("nick-pool.txt")).unwrap();
         assert!(file.lines().any(|l| l == "Notch"), "{file}");
@@ -1315,23 +1448,26 @@ mod tests {
         rig.host.told.clear();
         assert_eq!(
             rig.answer(ALICE, "nick pool add NOTCH"),
-            ["Notch is in the pool already."]
+            ["Notch is in the pool already"]
         );
         assert_eq!(
             rig.answer(ALICE, "nick pool add has/slash"),
-            ["has/slash is not an account name: 1 to 16 letters, digits or underscores."]
+            refused(
+                "...has/slash",
+                "has/slash is not an account name: 1 to 16 letters, digits or underscores"
+            )
         );
         rig.run(ALICE, "nick pool add Ghost");
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["No account is called ghost: the pool takes only accounts that exist."]
+            ["No account is called ghost: the pool takes only accounts that exist"]
         );
         rig.host.told.clear();
         rig.lookup.down.store(true, Ordering::SeqCst);
         rig.run(ALICE, "nick pool add Steve");
         assert_eq!(
             rig.host.told_to(ALICE),
-            ["Mojang's services did not answer, so steve was not checked or added. Try again."]
+            ["Mojang's services did not answer, so steve was not checked or added. Try again"]
         );
         let file = std::fs::read_to_string(rig.config_file("nick-pool.txt")).unwrap();
         assert!(!file.contains("Ghost") && !file.contains("Steve"), "{file}");
@@ -1346,7 +1482,7 @@ mod tests {
         rig.run(ALICE, "nick off Bob");
         assert_eq!(
             rig.answer(ALICE, "nick pool remove REX"),
-            ["Removed Rex from the pool (0 names left)."]
+            ["Removed Rex from the pool (0 names left)!"]
         );
         let file = std::fs::read_to_string(rig.config_file("nick-pool.txt")).unwrap();
         assert!(!file.lines().any(|l| l == "Rex"), "{file}");
@@ -1355,7 +1491,7 @@ mod tests {
         assert!(!pins.contains("rex"), "{pins}");
         assert_eq!(
             rig.answer(ALICE, "nick pool remove Rex"),
-            ["Rex is not in the pool."]
+            refused("...remove Rex", "Rex is not in the pool")
         );
         rig.run(ALICE, "nick random Bob");
         assert_eq!(rig.nickname(BOB), None, "the pool is empty now");
@@ -1366,13 +1502,13 @@ mod tests {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.answer(ALICE, "nick pool check"),
-            ["The pool has 4 names: 0 with their skin kept, 4 not looked up yet."]
+            ["The pool has 4 names: 0 with their skin kept, 4 not looked up yet"]
         );
         rig.run(ALICE, "nick random Bob");
         let pinned = rig.nickname(BOB).unwrap();
         assert_eq!(
             rig.answer(ALICE, "nick pool check"),
-            ["The pool has 4 names: 1 with their skin kept, 3 not looked up yet."]
+            ["The pool has 4 names: 1 with their skin kept, 3 not looked up yet"]
         );
         // One that is kept is answered at once.
         assert_eq!(
@@ -1381,7 +1517,7 @@ mod tests {
                 &format!("nick pool check {}", pinned.to_ascii_lowercase())
             ),
             [format!(
-                "{pinned} is in the pool; its skin is kept (the account {pinned})."
+                "{pinned} is in the pool; its skin is kept (the account {pinned})"
             )]
         );
         // One that is not is looked up.
@@ -1397,7 +1533,7 @@ mod tests {
         assert_eq!(
             rig.host.told_to(ALICE),
             [format!(
-                "{other} is in the pool; the account {other} exists and its skin is kept."
+                "{other} is in the pool; the account {other} exists and its skin is kept"
             )]
         );
         rig.host.told.clear();
@@ -1406,8 +1542,8 @@ mod tests {
         assert_eq!(
             rig.host.told_to(ALICE),
             [
-                "notch is not in the pool; the account Notch exists and its skin is not kept (not in the pool).",
-                "ghost is not in the pool; no account is called ghost, so it cannot be used.",
+                "notch is not in the pool; the account Notch exists and its skin is not kept (not in the pool)",
+                "ghost is not in the pool; no account is called ghost, so it cannot be used",
             ]
         );
     }
@@ -1425,7 +1561,7 @@ mod tests {
         assert_eq!(
             rig.run_console("nick reload"),
             [
-                "Nick config reloaded: 2 names in the pool, 0 skins kept.",
+                "Reloaded the nick config: 2 names in the pool, 0 skins kept!",
                 "1 line(s) of nick-pool.txt are not account names and are left out",
             ]
         );
@@ -1443,7 +1579,7 @@ mod tests {
         );
         assert_eq!(
             rig.answer(ALICE, "nick pool check"),
-            ["The pool has 2 names: 0 with their skin kept, 2 not looked up yet."]
+            ["The pool has 2 names: 0 with their skin kept, 2 not looked up yet"]
         );
     }
 
@@ -1457,14 +1593,18 @@ mod tests {
         assert!(rig.host.nicknames.is_empty() && rig.host.tags.is_empty());
         assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
         assert_eq!(rig.nickname(BOB), None);
-        let off = "Nicknames are turned off (enabled = false in config/nick.toml). /nick reload reads it again.";
-        assert_eq!(rig.answer(ALICE, "nick Bob Rex"), [off]);
-        assert_eq!(rig.answer(ALICE, "nick list"), [off]);
-        rig.set_config("enabled = true\n");
+        assert_eq!(
+            rig.host.told_to(BOB).last().map(String::as_str),
+            Some("Your nickname has been removed")
+        );
+        let off = "Nicknames are turned off (enabled = false in config/nick.toml): /nick reload reads it again";
         assert_eq!(
             rig.answer(ALICE, "nick Bob Rex"),
-            ["Bob is now nicknamed Rex."]
+            refused("...ck Bob Rex", off)
         );
+        assert_eq!(rig.answer(ALICE, "nick list"), refused("nick list", off));
+        rig.set_config("enabled = true\n");
+        assert_eq!(rig.answer(ALICE, "nick Bob Rex"), ["Nicknamed Bob as Rex!"]);
     }
 
     #[test]
@@ -1494,9 +1634,10 @@ mod tests {
         assert!(!rig.say(ALICE, "nickname"));
         assert_eq!(
             rig.answer(ALICE, "nick"),
-            [
+            refused(
+                "nick",
                 "Usage: /nick <name> | <player> <name> | off [players|admin] | random [players|admin] | info <nickname> | list | pool add|remove|check [name] | reload"
-            ]
+            )
         );
     }
 

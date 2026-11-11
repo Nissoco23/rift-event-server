@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(rig.host.calls, [(BOB, Some(6))], "Alice's is the same");
         assert_eq!(
             rig.host.feedback.last().unwrap(),
-            "View distance config reloaded."
+            "Reloaded the view distance config!"
         );
     }
 
@@ -424,7 +424,7 @@ mod tests {
         assert_eq!(
             rig.host.feedback,
             [
-                "View distance limits: players 8, operators 32 (operator level 1 and up).",
+                "View distance limits: players 8, operators 32 (operator level 1 and up)",
                 "Bob (player): asks ?, near 8, limit 8",
                 "Alice (operator): asks ?, near 10, limit 32",
             ]
@@ -446,8 +446,11 @@ mod tests {
         let mut rig = Rig::new(DEFAULTS);
         assert!(rig.console("viewdistance dance"));
         assert_eq!(
-            rig.host.feedback.last().unwrap(),
-            "Usage: /viewdistance status | reload"
+            rig.host.feedback,
+            [
+                "Unknown or incomplete command. See below for error",
+                "...ance dance<--[Usage: /viewdistance status | reload]"
+            ]
         );
         assert!(!rig.console("gamemode creative"));
         assert_eq!(

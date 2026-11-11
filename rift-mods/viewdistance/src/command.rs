@@ -1,20 +1,17 @@
 //! `/viewdistance status | reload`, for operators.
 
 use crate::ViewDistance;
-use horizon_client::mod_api::{Host, NativeCommand, Text};
+use horizon_client::mod_api::{Host, NativeCommand};
 
 /// Who may run the command: the permission node a permissions mod can grant, or an operator of level
 /// 2 where nothing does.
 pub const ADMIN: &str = "viewdistance.admin";
 const OP_LEVEL: u8 = 2;
 
-const AQUA: u32 = 0x55FFFF;
-const RED: u32 = 0xFF5555;
-const GRAY: u32 = 0xAAAAAA;
-
 const USAGES: [&str; 2] = ["viewdistance status", "viewdistance reload"];
 
-const USAGE: &str = "Usage: /viewdistance status | reload";
+/// What the command takes, for the error of a line it cannot read.
+const USAGE: &str = "status | reload";
 
 /// The command's usages, for the players' command trees.
 pub fn register(commands: &mut Vec<NativeCommand>) {
@@ -46,8 +43,9 @@ pub fn parse(line: &str) -> Option<Command> {
     })
 }
 
-fn say(host: &mut dyn Host, text: impl Into<String>, color: u32) {
-    host.feedback(Text::colored(text.into(), color));
+/// A line of markup (`rift_chat`) to whoever ran the command.
+fn say(host: &mut dyn Host, markup: &str) {
+    host.feedback(rift_chat::mini(markup));
 }
 
 /// Runs `line`. Whether it was a `viewdistance` command.
@@ -58,13 +56,20 @@ pub fn run(module: &ViewDistance, host: &mut dyn Host, line: &str) -> bool {
     match command {
         Command::Status => status(module, host),
         Command::Reload => reload(module, host),
-        Command::Usage => say(host, USAGE, RED),
+        Command::Usage => {
+            let words = line.split_whitespace().count();
+            let message = format!("Usage: <accent>/viewdistance</accent> {USAGE}");
+            let [header, context] = rift_chat::error(line, words, &message);
+            host.feedback(header);
+            host.feedback(context);
+        }
     }
     true
 }
 
-/// One player's line of `status`: whether they count as an operator, what their client asks for,
-/// the radius the engine sends them in full (the far ring reaches past it for those whose limit allows) and the limit this mod set. A `?` is what the server could not tell.
+/// One player's line of `status` as markup: whether they count as an operator, what their client
+/// asks for, the radius the engine sends them in full (the far ring reaches past it for those whose
+/// limit allows) and the limit this mod set. A `?` is what the server could not tell.
 pub fn describe(
     name: &str,
     operator: bool,
@@ -74,13 +79,14 @@ pub fn describe(
     limit: Option<i32>,
 ) -> String {
     let number = |n: Option<i32>| n.map_or_else(|| "?".to_owned(), |n| n.to_string());
+    let name = rift_chat::escape(name);
     if fake {
-        return format!("{name} (fake player): not limited");
+        return format!("<accent>{name}</accent><gray> (fake player): not limited</gray>");
     }
     let who = if operator { "operator" } else { "player" };
     let limit = limit.map_or_else(|| "none yet".to_owned(), |n| n.to_string());
     format!(
-        "{name} ({who}): asks {}, near {}, limit {limit}",
+        "<accent>{name}</accent><gray> ({who}): asks {}, near {}, limit {limit}</gray>",
         number(asks),
         number(gets)
     )
@@ -91,22 +97,20 @@ fn status(module: &ViewDistance, host: &mut dyn Host) {
     if cfg.enabled {
         say(
             host,
-            format!(
-                "View distance limits: players {}, operators {} (operator level {} and up).",
+            &format!(
+                "<white>View distance limits: players <accent>{}</accent>, operators <accent>{}</accent></white><gray> (operator level {} and up)</gray>",
                 cfg.non_op_max, cfg.op_max, cfg.op_level
             ),
-            AQUA,
         );
     } else {
         say(
             host,
-            "View distance limits are off (enabled = false in config/viewdistance.toml).",
-            GRAY,
+            "<gray>View distance limits are off (enabled = false in config/viewdistance.toml)</gray>",
         );
     }
     let players = host.server_players();
     if players.is_empty() {
-        say(host, "No players are online.", GRAY);
+        say(host, "<gray>No players are online</gray>");
     }
     for p in &players {
         let asks = host
@@ -120,7 +124,7 @@ fn status(module: &ViewDistance, host: &mut dyn Host) {
             host.player_view_distance(p.uuid),
             module.applied(p.uuid),
         );
-        say(host, line, GRAY);
+        say(host, &line);
     }
 }
 
@@ -130,7 +134,10 @@ fn reload(module: &ViewDistance, host: &mut dyn Host) {
             // The new limits apply now, not at the next second.
             let players = host.server_players();
             module.reconcile(host, &players, true);
-            say(host, "View distance config reloaded.", AQUA);
+            say(
+                host,
+                "<white>Reloaded the <accent>view distance</accent> config!</white>",
+            );
         }
         Err(e) => {
             host.log(
@@ -139,8 +146,10 @@ fn reload(module: &ViewDistance, host: &mut dyn Host) {
             );
             say(
                 host,
-                format!("Could not read the config, keeping the old one: {e}"),
-                RED,
+                &format!(
+                    "<red>Could not read the config, keeping the old one: {}</red>",
+                    rift_chat::escape(&e)
+                ),
             );
         }
     }
@@ -149,6 +158,7 @@ fn reload(module: &ViewDistance, host: &mut dyn Host) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rift_chat::plain;
 
     #[test]
     fn a_line_that_is_not_ours_is_not_read() {
@@ -192,19 +202,26 @@ mod tests {
     #[test]
     fn a_players_line_says_what_they_ask_get_and_are_limited_to() {
         assert_eq!(
-            describe("Bob", false, false, Some(24), Some(8), Some(8)),
+            plain(&describe("Bob", false, false, Some(24), Some(8), Some(8))),
             "Bob (player): asks 24, near 8, limit 8"
         );
         assert_eq!(
-            describe("Alice", true, false, Some(12), Some(12), Some(32)),
+            plain(&describe(
+                "Alice",
+                true,
+                false,
+                Some(12),
+                Some(12),
+                Some(32)
+            )),
             "Alice (operator): asks 12, near 12, limit 32"
         );
         assert_eq!(
-            describe("Eve", false, false, None, None, None),
+            plain(&describe("Eve", false, false, None, None, None)),
             "Eve (player): asks ?, near ?, limit none yet"
         );
         assert_eq!(
-            describe("Bot", true, true, None, None, None),
+            plain(&describe("Bot", true, true, None, None, None)),
             "Bot (fake player): not limited"
         );
     }
