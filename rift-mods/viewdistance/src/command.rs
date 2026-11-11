@@ -64,7 +64,7 @@ pub fn run(module: &ViewDistance, host: &mut dyn Host, line: &str) -> bool {
 }
 
 /// One player's line of `status`: whether they count as an operator, what their client asks for,
-/// what the engine sends them and the limit this mod set. A `?` is what the server could not tell.
+/// the radius the engine sends them in full (the far ring reaches past it for those whose limit allows) and the limit this mod set. A `?` is what the server could not tell.
 pub fn describe(
     name: &str,
     operator: bool,
@@ -80,7 +80,7 @@ pub fn describe(
     let who = if operator { "operator" } else { "player" };
     let limit = limit.map_or_else(|| "none yet".to_owned(), |n| n.to_string());
     format!(
-        "{name} ({who}): asks {}, gets {}, limit {limit}",
+        "{name} ({who}): asks {}, near {}, limit {limit}",
         number(asks),
         number(gets)
     )
@@ -193,15 +193,15 @@ mod tests {
     fn a_players_line_says_what_they_ask_get_and_are_limited_to() {
         assert_eq!(
             describe("Bob", false, false, Some(24), Some(8), Some(8)),
-            "Bob (player): asks 24, gets 8, limit 8"
+            "Bob (player): asks 24, near 8, limit 8"
         );
         assert_eq!(
             describe("Alice", true, false, Some(12), Some(12), Some(32)),
-            "Alice (operator): asks 12, gets 12, limit 32"
+            "Alice (operator): asks 12, near 12, limit 32"
         );
         assert_eq!(
             describe("Eve", false, false, None, None, None),
-            "Eve (player): asks ?, gets ?, limit none yet"
+            "Eve (player): asks ?, near ?, limit none yet"
         );
         assert_eq!(
             describe("Bot", true, true, None, None, None),

@@ -425,8 +425,8 @@ mod tests {
             rig.host.feedback,
             [
                 "View distance limits: players 8, operators 32 (operator level 1 and up).",
-                "Bob (player): asks ?, gets 8, limit 8",
-                "Alice (operator): asks ?, gets 10, limit 32",
+                "Bob (player): asks ?, near 8, limit 8",
+                "Alice (operator): asks ?, near 10, limit 32",
             ]
         );
         // From a player too.

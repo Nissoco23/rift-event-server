@@ -43,7 +43,7 @@ For operators of level 2 (or whoever a permissions mod grants `viewdistance.admi
 
 | Command | What it does |
 | --- | --- |
-| `/viewdistance status` | The limits, and for every player what their client asks for, what they get and the limit set. |
+| `/viewdistance status` | The limits, and for every player what their client asks for, the radius they are sent in full (`near`; the far ring reaches past it for operators) and the limit set. |
 | `/viewdistance reload` | Reads `config/viewdistance.toml` again and applies it at once. |
 
 ## Configuration
