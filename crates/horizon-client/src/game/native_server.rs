@@ -47,6 +47,12 @@ fn parser(kind: &str) -> Option<(&'static str, Value)> {
             "minecraft:entity",
             json!({"amount": "single", "type": "players"}),
         ),
+        // Several players, as `/kick`'s `targets`: the client offers `@a`, `@p`, `@r` and `@s`
+        // besides the names.
+        "players" => (
+            "minecraft:entity",
+            json!({"amount": "multiple", "type": "players"}),
+        ),
         "item" => ("minecraft:item_stack", Value::Null),
         "block_pos" => ("minecraft:block_pos", Value::Null),
         _ => return None,
@@ -1909,6 +1915,32 @@ mod tests {
         assert!(inventory_add(&mut inv, &mut off, 0, 64, &mut apple));
         assert!(off.is_none(), "never into an empty off hand (getFreeSlot)");
         assert_eq!(apple.count, 3);
+    }
+
+    /// `player` is one online player; `players` is several, and a client completes `@a`, `@p`, `@r`
+    /// and `@s` for it.
+    #[test]
+    fn a_players_argument_takes_several_players_where_a_player_argument_takes_one() {
+        let (t, _, problems) = tree(&[NativeCommand::new(
+            "mark <one:player> <many:players> [more:players]",
+        )]);
+        assert!(problems.is_empty(), "{problems:?}");
+        let one = &t["children"]["mark"]["children"]["one"];
+        assert_eq!(one["parser"], "minecraft:entity");
+        assert_eq!(
+            one["properties"],
+            json!({"amount": "single", "type": "players"})
+        );
+        let many = &one["children"]["many"];
+        assert_eq!(many["parser"], "minecraft:entity");
+        assert_eq!(
+            many["properties"],
+            json!({"amount": "multiple", "type": "players"})
+        );
+        assert_eq!(many["executable"], true);
+        assert_eq!(many["children"]["more"]["executable"], true);
+        // An optional one is the same argument.
+        assert_eq!(many["children"]["more"]["properties"], many["properties"]);
     }
 
     #[test]

@@ -2233,9 +2233,11 @@ For mods that run where the world is simulated: a dedicated server, a LAN host, 
   players. A usage is words, then arguments `<name:kind>`, optional ones last in brackets:
   `NativeCommand::new("pay <player:player> <amount:integer>")`, `NativeCommand::op("eco set <player:player>
   <amount:integer>", 3)` for operators of level 3. Kinds: `word`, `text` (the rest of the line, last), `integer`,
-  `number`, `boolean`, `player`, `item`, `block_pos`. The usages of one command merge into one tree, which every
-  player receives after vanilla's (filtered by their level, as vanilla's is), so their chat box completes and colours
-  it. A name vanilla has, or a usage that doesn't parse, is left out with a warning in the log.
+  `number`, `boolean`, `player` (one online player), `players` (several: the player's client completes `@a`, `@p`,
+  `@r` and `@s` for it, and the mod gets the typed word and resolves it), `item`, `block_pos`. The usages of one
+  command merge into one tree, which every player receives after vanilla's (filtered by their level, as vanilla's
+  is), so their chat box completes and colours it. A name vanilla has, or a usage that doesn't parse, is left out
+  with a warning in the log.
 - **`native_refresh_commands()`** (`host.refresh_commands()` for trait mods, API @API:refresh_commands@): a helper for
   a mod whose commands change while the server runs (a plugin host that reloads a plugin, a mod turned on at run time).
   At the start of the next server tick every mod's `native_register_commands` is asked again, the commands players may

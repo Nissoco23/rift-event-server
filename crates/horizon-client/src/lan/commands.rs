@@ -450,6 +450,10 @@ mod tests {
         );
         let p: Value = serde_json::from_str(r#"{"amount": "single", "type": "players"}"#).unwrap();
         assert_eq!(properties("minecraft:entity", &p), vec![3]);
+        // `EntityArgument.players()`, as `/kick` takes its targets: players only, any number.
+        let p: Value =
+            serde_json::from_str(r#"{"amount": "multiple", "type": "players"}"#).unwrap();
+        assert_eq!(properties("minecraft:entity", &p), vec![2]);
         let p: Value = serde_json::from_str(r#"{"type": "greedy"}"#).unwrap();
         assert_eq!(properties("brigadier:string", &p), vec![2]);
     }
