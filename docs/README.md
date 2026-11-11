@@ -27,6 +27,7 @@ start with [the README](../README.md).
 - [Mods](mods.md): content mods (data) and native mods (Rust).
 - [Native mods](native-mods.md): the hook points and helpers, the server hooks (commands, players, packets,
   NPCs, bots...), trait mods and how to add a hook.
+- [Rift's own mods](rift-mods.md): the crates in `rift-mods/`, how `rift-engine` links them, how to add one.
 - [Native hook points modelled on NeoForge](native-hooks-neoforge.md): the proposal for new hooks.
 - [Survival multiplayer](smp.md): an example of a server mod built on the server hooks (economy, market,
   trades, homes, claims).

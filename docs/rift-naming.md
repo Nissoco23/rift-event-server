@@ -10,8 +10,9 @@ say Rift.
 - **Product:** Rift Event Server.
 - **Programs.** `scripts/build.sh` copies the Cargo outputs into `dist/` under these names:
   - `rift-server`: the supervisor (Cargo package `horizon-server`).
-  - `rift-engine`: the game engine, built without default features (package `horizon-client`). The supervisor
-    looks for `rift-engine` first, then `horizon-engine`, then `horizon-client`.
+  - `rift-engine`: the game engine with the mods of `rift-mods/` linked in, built without default features
+    (package `rift-engine`, which wraps `horizon-client`: [rift-mods.md](rift-mods.md)). The supervisor looks for
+    `rift-engine` first, then `horizon-engine`, then `horizon-client`.
   - `rift-prepare`: prepares the game files from your own Minecraft copy (package `horizon-prepare`).
 - **CLI and panel:** every `rift-server` and `rift-prepare` help text and message; the web panel's title and
   header; the MCP server's name and instructions; `docs/api/server-reference.md`.

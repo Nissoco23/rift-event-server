@@ -2,8 +2,9 @@
 
 Nissoco's server-only fork of Horizon (Minecraft: Java Edition 26.3 rewritten in Rust, MIT), for the Rift SMP's
 event server. The product is the dedicated server: the engine (`horizon-client --dedicated`, built as
-`rift-engine`) run by the supervisor (`horizon-server`, built as `rift-server`). Vanilla is the specification
-wherever it has the feature. Read [CONTRIBUTING.md](CONTRIBUTING.md) once; this page tells you where things are.
+`rift-engine` with the mods of `rift-mods/` linked in) run by the supervisor (`horizon-server`, built as
+`rift-server`). Vanilla is the specification wherever it has the feature. Read [CONTRIBUTING.md](CONTRIBUTING.md)
+once; this page tells you where things are.
 Feature → files → harness for the most-changed areas: [docs/architecture.md](docs/architecture.md).
 
 ## Rules that bite
@@ -19,15 +20,18 @@ Feature → files → harness for the most-changed areas: [docs/architecture.md]
 - **Names.** What a player or an operator reads says Rift; internal names stay Horizon's
   ([docs/rift-naming.md](docs/rift-naming.md)). The programs are `rift-server`, `rift-engine` and
   `rift-prepare` (`scripts/build.sh` copies them into `dist/`); their Cargo packages and binaries are still
-  `horizon-server`, `horizon-client` and `horizon-prepare`, which the harnesses use.
+  `horizon-server`, `horizon-client` and `horizon-prepare`, which the harnesses use. The exception is
+  `rift-engine`, a package of its own: the engine's `main` with the mods linked in, where `horizon-client`
+  stays the plain engine the harnesses run.
 - **Where Rift's own code goes.** The server's players use stock vanilla clients behind a Velocity proxy, so
   nothing may need a client mod.
   1. Engine code, for what needs the engine's internals or hot paths: the anticheat
      (`crates/horizon-anticheat`, `lan/anticheat.rs`) and the core commands.
   2. Native mods on the hook points ([docs/native-mods.md](docs/native-mods.md)), for plugin ports and custom
      weapons: vanilla items with data components, plus hooks. A mod must not register custom component types
-     or registry content: the engine turns vanilla clients away when it does (`lan/conn.rs`). No mod is linked
-     in yet; they will be Rust crates that a small executable hands to `horizon_client::entry::main_with`.
+     or registry content: the engine turns vanilla clients away when it does (`lan/conn.rs`). Mods are Rust
+     crates in `rift-mods/`, one folder each, that `crates/rift-engine` hands to
+     `horizon_client::entry::main_with` ([docs/rift-mods.md](docs/rift-mods.md)); the first is `sculkstorm`.
   3. Data packs and resource packs, for data and looks.
 - **Commits.** Plain, professional messages: a short imperative subject and a body that says why. No agent or
   tool branding, and no `Co-Authored-By` trailers.
@@ -77,9 +81,12 @@ Game workspace (root `Cargo.toml`). The launcher and the other Horizon-only crat
 | `horizon-dualsense`, `horizon-threads`, `horizon-release-sign`, `horizon-bots`, `xtask` | DualSense output, thread priorities, signed release checksums, load-test bots, repo tasks |
 | `horizon-mod-api-gen`, `horizon-mod-deps` | Generates the native mod API (`Hooks`, `Host`, dispatch) from `native-hooks.json` at build time; the allow-list of registry crates a mod may depend on |
 | `horizon-chat-filter`, `horizon-mcp` | The dedicated server's chat filter ([docs/chat-filter.md](docs/chat-filter.md)); the Model Context Protocol shared by `horizon-server` and `horizon-ctl` |
+| `rift-engine` | The server's engine program: the engine's `main` with every mod of `rift-mods/` handed to it; `scripts/build.sh` copies it to `dist/rift-engine` ([docs/rift-mods.md](docs/rift-mods.md)) |
+| `sculkstorm` (in `rift-mods/`) | The Sculkstorm Scythe, a native mod: Sculk Cataclysm and Soulstorm Ascension ([README](rift-mods/sculkstorm/README.md)) |
 
 Other top-level folders: `scripts/` (`build.sh`), `tools/` (harnesses and dev scripts), `tests/` (Python unit tests: `python3 -m
-unittest discover -s tests`), `mods/horizon/src/test/java/dev/horizonlab/parity/` (Java oracles), `docs/`, `packaging/` (a Dockerfile
+unittest discover -s tests`), `mods/horizon/src/test/java/dev/horizonlab/parity/` (Java oracles), `rift-mods/` (Rift's own
+native mods, one crate each), `docs/`, `packaging/` (a Dockerfile
 and the Windows executable's resources), `third_party/` (patched dependencies the build needs), `native-hooks.json` (the native mod
 hook catalog) and `research-lock.json` (the pinned Minecraft version and the hashes `rift-prepare` checks). `dist/` (the built
 programs) and `run/` (server folders) are generated and ignored by Git.

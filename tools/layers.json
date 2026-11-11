@@ -41,6 +41,7 @@
     "horizon-shader-api": "platform",
     "horizon-shaders": "platform",
     "horizon-theme": "platform",
+    "rift-engine": "platform",
     "sculkstorm": "platform",
 
     "horizon-addresses": "horizon",

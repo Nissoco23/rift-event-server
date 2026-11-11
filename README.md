@@ -16,7 +16,7 @@ and drops the client, the launcher and the other parts a server never runs. Play
 
 - `rift-server`: the supervisor. It keeps the settings in `server.toml`, runs the engine, restarts it if it
   crashes, takes backups, and offers a command line, a web panel, a control API, RCON and an MCP server.
-- `rift-engine`: the game engine, run headless by the supervisor.
+- `rift-engine`: the game engine with the mods of `rift-mods/` linked in, run headless by the supervisor.
 - `rift-prepare`: builds the engine's game files from your own copy of Minecraft. It never downloads the game.
 
 Their Cargo packages are still called `horizon-server`, `horizon-client` and `horizon-prepare`;
@@ -101,6 +101,8 @@ Details: [docs/hosting.md](docs/hosting.md#behind-a-velocity-proxy) and
   to files, and [AGENTS.md](AGENTS.md) has the crate table.
 - `docs/`: [the index](docs/README.md). Start with [hosting](docs/hosting.md) and
   [the mod API](docs/native-mods.md).
+- `rift-mods/`: Rift's own mods, one crate each (the Sculkstorm Scythe is the first), which
+  `crates/rift-engine` links into `rift-engine`: [docs/rift-mods.md](docs/rift-mods.md).
 - `tools/`, `tests/`, `mods/horizon/`: the harnesses that compare the engine with the real Java game. They
   need prepared game files and a JDK, and they are the specification of vanilla behaviour.
 - `scripts/build.sh`: the build. `dist/` and `run/` are generated and ignored by Git.

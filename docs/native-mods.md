@@ -5079,6 +5079,9 @@ the mod: a vanilla client decodes the count with vanilla's 1 to 99 and cannot sh
 
 ## Trait mods (draft)
 
+Rift Event Server has no launcher: its own trait mods are crates in `rift-mods/`, linked into the engine by
+`crates/rift-engine` ([rift-mods.md](rift-mods.md)).
+
 `cargo horizon-mod new <path> --template native --horizon <commit>` writes a trait mod to start from: the bundle's
 `horizon-mixin.toml`, pinned to that Horizon commit, and an `[api]` crate whose `hooks()` greets each player who
 joins. Its files are what a bundle may carry ([api/mod-files.md](api/mod-files.md)), so the launcher builds the folder

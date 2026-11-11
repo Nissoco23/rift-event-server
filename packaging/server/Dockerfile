@@ -15,10 +15,11 @@
 FROM rust:1-slim-bookworm AS build
 WORKDIR /src
 COPY . .
-# The server build of the game (no sound, no controllers: it needs neither ALSA nor udev) as horizon-engine.
-RUN cargo build --release --locked -p horizon-client --no-default-features --bin horizon-client \
+# The server build of the game (no sound, no controllers: it needs neither ALSA nor udev), with the mods of
+# rift-mods/ linked in (crates/rift-engine), as horizon-engine.
+RUN cargo build --release --locked -p rift-engine \
     && cargo build --release --locked -p horizon-server --bin horizon-server \
-    && mkdir /out && cp target/release/horizon-client /out/horizon-engine && cp target/release/horizon-server /out/
+    && mkdir /out && cp target/release/rift-engine /out/horizon-engine && cp target/release/horizon-server /out/
 
 FROM debian:bookworm-slim
 RUN useradd --system --home-dir /data --shell /usr/sbin/nologin horizon \

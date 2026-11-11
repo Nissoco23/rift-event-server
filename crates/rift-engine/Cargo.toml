@@ -1,0 +1,19 @@
+[package]
+name = "rift-engine"
+description = "The Rift engine with the mods of rift-mods/ linked in: scripts/build.sh puts it in dist/ as rift-engine"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The server build of the engine: no sound, no controllers, none of Horizon's extras (docs/server.md).
+horizon-client = { path = "../horizon-client", default-features = false }
+horizon-threads = { path = "../horizon-threads" }
+# The mods, in the order the engine runs their hooks (docs/rift-mods.md).
+sculkstorm = { path = "../../rift-mods/sculkstorm" }
+
+[lints]
+workspace = true
