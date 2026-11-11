@@ -20,6 +20,7 @@ fn main() {
         (sculkstorm::ID, sculkstorm::hooks()),
         (viewdistance::ID, viewdistance::hooks()),
         (nick::ID, nick::hooks()),
+        (essentials::ID, essentials::hooks()),
     ];
     // The names a crash report and a log line give a mod's hooks by. The engine keeps them for the
     // whole run, and this is the only call, so the list is leaked rather than copied.

@@ -1,0 +1,18 @@
+[package]
+name = "essentials"
+description = "Operator shortcuts for Rift Event Server: /gmc /gms /gmsp /gma for the game mode and /flyspeed for the flying speed"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The engine's library, for `horizon_client::mod_api`: the server build, as rift-engine has it.
+horizon-client = { path = "../../crates/horizon-client", default-features = false }
+# The look of the mod's messages.
+rift-chat = { path = "../../crates/rift-chat" }
+
+[lints]
+workspace = true

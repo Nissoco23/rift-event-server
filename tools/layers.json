@@ -46,6 +46,7 @@
     "rift-engine": "platform",
     "sculkstorm": "platform",
     "viewdistance": "platform",
+    "essentials": "platform",
 
     "horizon-addresses": "horizon",
     "horizon-bench": "horizon",

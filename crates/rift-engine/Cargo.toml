@@ -16,6 +16,7 @@ horizon-threads = { path = "../horizon-threads" }
 sculkstorm = { path = "../../rift-mods/sculkstorm" }
 nick = { path = "../../rift-mods/nick" }
 viewdistance = { path = "../../rift-mods/viewdistance" }
+essentials = { path = "../../rift-mods/essentials" }
 
 [lints]
 workspace = true

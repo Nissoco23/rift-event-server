@@ -64,3 +64,5 @@ markup.
   operators.
 - [Nick](../rift-mods/nick/README.md): operator nicknames with another account's skin, and a pool of names
   for random ones.
+- [Essentials](../rift-mods/essentials/README.md): `/gmc`, `/gms`, `/gmsp`, `/gma` for the game mode and
+  `/flyspeed` for the flying speed, for operators.

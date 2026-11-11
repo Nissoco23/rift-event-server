@@ -86,6 +86,7 @@ Game workspace (root `Cargo.toml`). The launcher and the other Horizon-only crat
 | `sculkstorm` (in `rift-mods/`) | The Sculkstorm Scythe, a native mod: Sculk Cataclysm and Soulstorm Ascension ([README](rift-mods/sculkstorm/README.md)) |
 | `nick` (in `rift-mods/`) | A native mod for operator nicknames: a name and another account's skin for a player, a pool for random ones ([README](rift-mods/nick/README.md)) |
 | `viewdistance` (in `rift-mods/`) | A native mod that limits how far each player is sent chunks: one distance for players, another for operators ([README](rift-mods/viewdistance/README.md)) |
+| `essentials` (in `rift-mods/`) | A native mod for operator shortcuts: `/gmc` `/gms` `/gmsp` `/gma` set a game mode, `/flyspeed` the flying speed ([README](rift-mods/essentials/README.md)) |
 
 Other top-level folders: `scripts/` (`build.sh`), `tools/` (harnesses and dev scripts), `tests/` (Python unit tests: `python3 -m
 unittest discover -s tests`), `mods/horizon/src/test/java/dev/horizonlab/parity/` (Java oracles), `rift-mods/` (Rift's own

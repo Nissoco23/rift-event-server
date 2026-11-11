@@ -50,6 +50,7 @@ members = [
     "rift-mods/nick",
     "rift-mods/sculkstorm",
     "rift-mods/viewdistance",
+    "rift-mods/essentials",
     "xtask",
 ]
 resolver = "2"
