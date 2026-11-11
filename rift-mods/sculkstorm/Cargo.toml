@@ -1,0 +1,20 @@
+[package]
+name = "sculkstorm"
+description = "The Sculkstorm Scythe for Rift Event Server: Soulstorm Ascension and Sculk Cataclysm, as a native mod"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The engine's library, for `horizon_client::mod_api`: the server build, as rift-engine has it.
+horizon-client = { path = "../../crates/horizon-client", default-features = false }
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+# The mod's own config/sculkstorm.toml.
+toml = "1.1"
+
+[lints]
+workspace = true

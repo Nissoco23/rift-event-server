@@ -42,6 +42,8 @@ members = [
     "crates/horizon-shader-api",
     "crates/horizon-release-sign",
     "crates/horizon-mod-deps",
+    # Rift's own mods, one crate each, linked into rift-engine (docs/rift-mods.md).
+    "rift-mods/sculkstorm",
     "xtask",
 ]
 resolver = "2"
