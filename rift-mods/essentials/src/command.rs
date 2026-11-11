@@ -1,4 +1,5 @@
-//! `/gmc`, `/gms`, `/gmsp`, `/gma <player>` and `/flyspeed <1-10>`, for operators.
+//! `/gmc`, `/gms`, `/gmsp`, `/gma <targets>`, vanilla's `/gamemode <mode> <targets>` in their place,
+//! and `/flyspeed <1-10>`, for operators.
 
 use crate::state::{Actor, Job, Mode, State, accent};
 use horizon_client::mod_api::{Host, NativeCommand, NativeServerPlayer};
@@ -10,18 +11,37 @@ pub const GAME_MODE: &str = "essentials.gamemode";
 pub const FLY_SPEED: &str = "essentials.flyspeed";
 const OP_LEVEL: u8 = 2;
 
-const GAME_MODE_USAGES: [&str; 4] = [
-    "gmc [targets:players]",
-    "gms [targets:players]",
-    "gmsp [targets:players]",
-    "gma [targets:players]",
-];
 const FLY_SPEED_USAGE: &str = "flyspeed <speed:number>";
 
-/// The command's usages, for the players' command trees.
+/// The shortcuts and vanilla's `/gamemode` mode words, by game mode.
+const SHORTCUTS: [(&str, &str); 4] = [
+    ("gms", "survival"),
+    ("gmc", "creative"),
+    ("gma", "adventure"),
+    ("gmsp", "spectator"),
+];
+
+/// What a game mode command takes besides players and selectors: every player who is no operator.
+const NON_OPS: &str = "--non-ops";
+
+/// The command's usages, for the players' command trees. `/gamemode` replaces vanilla's, which the
+/// mod then answers in full (`NativeCommand::replace_vanilla`).
 pub fn register(commands: &mut Vec<NativeCommand>) {
-    for usage in GAME_MODE_USAGES {
-        commands.push(NativeCommand::op(usage, OP_LEVEL).permission(GAME_MODE));
+    let mut add = |usage: String, replace: bool| {
+        commands.push(
+            NativeCommand::op(&usage, OP_LEVEL)
+                .permission(GAME_MODE)
+                .replace_vanilla(replace),
+        );
+    };
+    for (shortcut, mode) in SHORTCUTS {
+        for (head, replace) in [
+            (shortcut.to_owned(), false),
+            (format!("gamemode {mode}"), true),
+        ] {
+            add(format!("{head} [targets:players]"), replace);
+            add(format!("{head} {NON_OPS}"), replace);
+        }
     }
     commands.push(NativeCommand::op(FLY_SPEED_USAGE, OP_LEVEL).permission(FLY_SPEED));
 }
@@ -38,6 +58,7 @@ pub enum Command {
 }
 
 const MODE_USAGE: &str = "Usage: /<gmc|gms|gmsp|gma> [targets]";
+const GAMEMODE_USAGE: &str = "Usage: /gamemode <survival|creative|adventure|spectator> [targets]";
 const FLY_USAGE: &str = "Usage: /flyspeed <1-10>";
 
 /// Reads `line` (with or without its slash). None when it is not one of the commands.
@@ -45,7 +66,27 @@ pub fn parse(line: &str) -> Option<Command> {
     let mut words = line.trim().trim_start_matches('/').split_whitespace();
     let head = words.next()?.to_ascii_lowercase();
     let args: Vec<&str> = words.collect();
+    let mut args = args;
     let mode = match head.as_str() {
+        // Vanilla's, by the mode's name: the same as the shortcut for it.
+        "gamemode" => {
+            let Some(mode) = args
+                .first()
+                .and_then(|word| {
+                    SHORTCUTS
+                        .iter()
+                        .find(|(_, name)| name.eq_ignore_ascii_case(word))
+                })
+                .and_then(|(shortcut, _)| shortcut_mode(shortcut))
+            else {
+                return Some(Command::Usage(GAMEMODE_USAGE));
+            };
+            args.remove(0);
+            if args.len() > 1 {
+                return Some(Command::Usage(GAMEMODE_USAGE));
+            }
+            Some(mode)
+        }
         "gms" => Some(Mode::Survival),
         "gmc" => Some(Mode::Creative),
         "gma" => Some(Mode::Adventure),
@@ -66,6 +107,30 @@ pub fn parse(line: &str) -> Option<Command> {
         },
         _ => Command::Usage(MODE_USAGE),
     })
+}
+
+fn shortcut_mode(shortcut: &str) -> Option<Mode> {
+    match shortcut {
+        "gms" => Some(Mode::Survival),
+        "gmc" => Some(Mode::Creative),
+        "gma" => Some(Mode::Adventure),
+        "gmsp" => Some(Mode::Spectator),
+        _ => None,
+    }
+}
+
+/// Where the targets are in a game mode line: after `/gamemode <mode>`, or after a shortcut.
+fn target_at(line: &str) -> usize {
+    let first = line
+        .trim()
+        .trim_start_matches('/')
+        .split_whitespace()
+        .next();
+    if first.is_some_and(|word| word.eq_ignore_ascii_case("gamemode")) {
+        3
+    } else {
+        2
+    }
 }
 
 /// A line of markup (`rift_chat`) to whoever ran the command.
@@ -121,8 +186,8 @@ const NO_PLAYER: &str = "The console is no player: name one";
 
 /// The players a word names: the name they logged in with or their nickname, `@s` (whoever ran the
 /// command), `@a` (everyone), `@p` (the nearest to whoever ran it, themselves when no one is
-/// nearer, as vanilla has it) or `@r` (one at random). Options in brackets are not read. The error
-/// is markup.
+/// nearer, as vanilla has it), `@r` (one at random) or `--non-ops` (everyone who is no operator).
+/// Options in brackets are not read. The error is markup.
 fn select(
     state: &mut State,
     host: &dyn Host,
@@ -131,7 +196,8 @@ fn select(
 ) -> Result<Vec<NativeServerPlayer>, String> {
     if spec.contains('[') {
         return Err(
-            "Selector options are not supported here: use @a, @p, @r, @s or a name".to_owned(),
+            "Selector options are not supported here: use @a, @p, @r, @s, --non-ops or a name"
+                .to_owned(),
         );
     }
     let players = host.server_players();
@@ -144,6 +210,15 @@ fn select(
     };
     match spec.to_ascii_lowercase().as_str() {
         "@s" => own(players).map(|p| vec![p]),
+        NON_OPS => {
+            let found: Vec<NativeServerPlayer> =
+                players.into_iter().filter(|p| p.permission == 0).collect();
+            if found.is_empty() {
+                Err("No player was found: everyone online is an operator".to_owned())
+            } else {
+                Ok(found)
+            }
+        }
         "@a" | "@r" if players.is_empty() => Err("No player was found".to_owned()),
         "@a" => Ok(players),
         "@r" => {
@@ -190,7 +265,7 @@ fn game_mode(
     target: Option<&str>,
 ) {
     let found = match target {
-        Some(spec) => select(state, host, actor, spec).map_err(|why| (2, why)),
+        Some(spec) => select(state, host, actor, spec).map_err(|why| (target_at(line), why)),
         None => runner(host, actor, line).map(|p| vec![p]),
     };
     let found = match found {
@@ -274,7 +349,7 @@ mod tests {
 
     #[test]
     fn a_line_that_is_not_ours_is_not_read() {
-        for line in ["gamemode creative", "gmcc", "fly", "", "  "] {
+        for line in ["gamerule keepInventory true", "gmcc", "fly", "", "  "] {
             assert_eq!(parse(line), None, "{line:?}");
         }
     }
@@ -303,6 +378,45 @@ mod tests {
     }
 
     #[test]
+    fn vanillas_gamemode_is_read_as_the_shortcut_for_its_mode() {
+        for (line, mode) in [
+            ("gamemode creative", Mode::Creative),
+            ("/gamemode survival", Mode::Survival),
+            ("GAMEMODE Adventure", Mode::Adventure),
+            ("gamemode spectator", Mode::Spectator),
+        ] {
+            assert_eq!(
+                parse(line),
+                Some(Command::Mode { mode, target: None }),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            parse("gamemode creative Bob"),
+            Some(Command::Mode {
+                mode: Mode::Creative,
+                target: Some("Bob".into())
+            })
+        );
+        assert_eq!(
+            parse("gamemode creative --non-ops"),
+            Some(Command::Mode {
+                mode: Mode::Creative,
+                target: Some("--non-ops".into())
+            })
+        );
+        // Every line of the name is the mod's, since vanilla's is replaced: a wrong one is told.
+        for line in [
+            "gamemode",
+            "gamemode 1",
+            "gamemode flying",
+            "gamemode creative a b",
+        ] {
+            assert_eq!(parse(line), Some(Command::Usage(GAMEMODE_USAGE)), "{line}");
+        }
+    }
+
+    #[test]
     fn flyspeed_takes_one_word() {
         assert_eq!(parse("flyspeed 4"), Some(Command::FlySpeed("4".into())));
         assert_eq!(parse("flyspeed"), Some(Command::Usage(FLY_USAGE)));
@@ -313,10 +427,18 @@ mod tests {
     fn every_usage_is_for_operators_and_has_a_permission_node() {
         let mut commands = Vec::new();
         register(&mut commands);
-        assert_eq!(commands.len(), 5);
+        // A shortcut and vanilla's `/gamemode <mode>` for each of four modes, each with targets and
+        // with `--non-ops`, and `/flyspeed`.
+        assert_eq!(commands.len(), 4 * 2 * 2 + 1);
         for command in &commands {
             assert_eq!(command.level, 2);
-            assert!(!command.replace_vanilla);
+            // Only `/gamemode` is vanilla's name, and the mod answers all of it.
+            assert_eq!(
+                command.replace_vanilla,
+                command.usage.starts_with("gamemode "),
+                "{}",
+                command.usage
+            );
         }
         let node = |usage: &str| {
             commands

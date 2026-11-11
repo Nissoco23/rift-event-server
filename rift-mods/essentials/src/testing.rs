@@ -497,8 +497,89 @@ mod tests {
             rig.answer(ALICE, "gmc @a[distance=..5]"),
             refused(
                 "...tance=..5]",
-                "Selector options are not supported here: use @a, @p, @r, @s or a name"
+                "Selector options are not supported here: use @a, @p, @r, @s, --non-ops or a name"
             )
+        );
+        rig.tick();
+        assert!(rig.host.modes.is_empty());
+    }
+
+    #[test]
+    fn non_ops_is_every_player_who_is_no_operator() {
+        let mut rig = crowd();
+        rig.player(DAN).permission = 2;
+        assert_eq!(
+            rig.run(ALICE, "gmc --non-ops"),
+            ["Set 2 players gamemode to creative!"]
+        );
+        assert_eq!(rig.mode_of(BOB), 1);
+        assert_eq!(rig.mode_of(EVE), 1);
+        assert_eq!(rig.mode_of(ALICE), 0, "an operator");
+        assert_eq!(rig.mode_of(DAN), 0, "an operator of level 2");
+        assert_eq!(
+            rig.console("gms --NON-OPS"),
+            ["Set 2 players gamemode to survival!"]
+        );
+        assert_eq!(rig.mode_of(BOB), 0);
+        // With no one to change.
+        let mut ops = Rig::new();
+        ops.host.players.retain(|p| p.uuid == ALICE);
+        assert_eq!(
+            ops.answer(ALICE, "gmc --non-ops"),
+            refused(
+                "...--non-ops",
+                "No player was found: everyone online is an operator"
+            )
+        );
+    }
+
+    // ---- vanilla's /gamemode -------------------------------------------------------------
+
+    #[test]
+    fn gamemode_is_the_shortcut_for_its_mode_with_the_same_answers() {
+        let mut rig = crowd();
+        assert_eq!(
+            rig.run(ALICE, "gamemode creative Bob"),
+            ["Set Bob's game mode to creative!"]
+        );
+        assert_eq!(rig.mode_of(BOB), 1);
+        assert_eq!(
+            rig.run(ALICE, "/gamemode spectator"),
+            ["Set your game mode to spectator!"]
+        );
+        assert_eq!(rig.mode_of(ALICE), 3);
+        assert_eq!(
+            rig.run(ALICE, "gamemode adventure @a"),
+            ["Set 4 players gamemode to adventure!"]
+        );
+        assert_eq!(
+            rig.run(ALICE, "gamemode survival --non-ops"),
+            ["Set 3 players gamemode to survival!"]
+        );
+        assert_eq!(rig.mode_of(BOB), 0);
+        assert_eq!(rig.mode_of(ALICE), 2, "an operator");
+        assert_eq!(
+            rig.console("gamemode creative Eve"),
+            ["Set Eve's game mode to creative!"]
+        );
+    }
+
+    #[test]
+    fn a_gamemode_line_the_mod_cannot_read_is_told_and_not_left_to_vanilla() {
+        let mut rig = Rig::new();
+        let usage = "Usage: /gamemode <survival|creative|adventure|spectator> [targets]";
+        assert_eq!(rig.answer(ALICE, "gamemode"), refused("gamemode", usage));
+        assert_eq!(
+            rig.answer(ALICE, "gamemode flying"),
+            refused("...ode flying", usage)
+        );
+        assert_eq!(
+            rig.answer(ALICE, "gamemode creative Zed"),
+            refused("...eative Zed", "Player was not found")
+        );
+        assert_eq!(
+            rig.answer(ALICE, "gamemode creative @e"),
+            refused("...reative @e", "Only @a, @p, @r and @s are supported here")
         );
         rig.tick();
         assert!(rig.host.modes.is_empty());
@@ -639,7 +720,7 @@ mod tests {
     fn every_command_is_registered_for_operators_of_level_two_with_a_permission_node() {
         let mut rig = Rig::new();
         let commands = rig.registered();
-        assert_eq!(commands.len(), 5);
+        assert_eq!(commands.len(), 17);
         assert!(
             commands
                 .iter()
@@ -651,6 +732,9 @@ mod tests {
             "gms [targets:players]",
             "gmsp [targets:players]",
             "gma [targets:players]",
+            "gmc --non-ops",
+            "gamemode creative [targets:players]",
+            "gamemode spectator --non-ops",
             "flyspeed <speed:number>",
         ] {
             assert!(usages.contains(&usage), "{usage}");
@@ -660,7 +744,7 @@ mod tests {
     #[test]
     fn a_line_of_another_command_is_left_alone() {
         let mut rig = Rig::new();
-        assert!(!rig.takes(ALICE, "gamemode creative"));
+        assert!(!rig.takes(ALICE, "gamerule keepInventory true"));
         assert!(!rig.takes(ALICE, "gmcx"));
         assert!(rig.takes(ALICE, "gmc"));
     }
