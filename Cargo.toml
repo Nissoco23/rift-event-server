@@ -44,6 +44,8 @@ members = [
     "crates/horizon-mod-deps",
     # The engine program of the server, with the mods of rift-mods/ linked in (docs/rift-mods.md).
     "crates/rift-engine",
+    # How Rift's messages look: markup into text, and the command error (used by the mods).
+    "crates/rift-chat",
     # Rift's own mods, one crate each, linked into rift-engine.
     "rift-mods/nick",
     "rift-mods/sculkstorm",

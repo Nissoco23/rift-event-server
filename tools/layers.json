@@ -42,6 +42,7 @@
     "horizon-shaders": "platform",
     "horizon-theme": "platform",
     "nick": "platform",
+    "rift-chat": "platform",
     "rift-engine": "platform",
     "sculkstorm": "platform",
     "viewdistance": "platform",

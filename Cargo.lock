@@ -2639,6 +2639,7 @@ name = "nick"
 version = "0.1.0"
 dependencies = [
  "horizon-client",
+ "rift-chat",
  "serde",
  "serde_json",
  "toml",
@@ -3694,6 +3695,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
+name = "rift-chat"
+version = "0.1.0"
+dependencies = [
+ "horizon-client-core",
+]
+
+[[package]]
 name = "rift-engine"
 version = "0.1.0"
 dependencies = [
@@ -3926,6 +3934,7 @@ version = "0.1.0"
 dependencies = [
  "horizon-client",
  "log",
+ "rift-chat",
  "serde",
  "toml",
 ]
@@ -4652,6 +4661,7 @@ name = "viewdistance"
 version = "0.1.0"
 dependencies = [
  "horizon-client",
+ "rift-chat",
  "serde",
  "toml",
 ]

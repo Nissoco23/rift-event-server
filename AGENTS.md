@@ -81,6 +81,7 @@ Game workspace (root `Cargo.toml`). The launcher and the other Horizon-only crat
 | `horizon-dualsense`, `horizon-threads`, `horizon-release-sign`, `horizon-bots`, `xtask` | DualSense output, thread priorities, signed release checksums, load-test bots, repo tasks |
 | `horizon-mod-api-gen`, `horizon-mod-deps` | Generates the native mod API (`Hooks`, `Host`, dispatch) from `native-hooks.json` at build time; the allow-list of registry crates a mod may depend on |
 | `horizon-chat-filter`, `horizon-mcp` | The dedicated server's chat filter ([docs/chat-filter.md](docs/chat-filter.md)); the Model Context Protocol shared by `horizon-server` and `horizon-ctl` |
+| `rift-chat` | Chat text in Rift's message style for the mods: MiniMessage-like markup (`<gray>`, `<accent>`, `<click:run_command:'/x'>`) to `Text`, and the two-line command error ([docs/rift-mods.md](docs/rift-mods.md#messages)) |
 | `rift-engine` | The server's engine program: the engine's `main` with every mod of `rift-mods/` handed to it; `scripts/build.sh` copies it to `dist/rift-engine` ([docs/rift-mods.md](docs/rift-mods.md)) |
 | `sculkstorm` (in `rift-mods/`) | The Sculkstorm Scythe, a native mod: Sculk Cataclysm and Soulstorm Ascension ([README](rift-mods/sculkstorm/README.md)) |
 | `nick` (in `rift-mods/`) | A native mod for operator nicknames: a name and another account's skin for a player, a pool for random ones ([README](rift-mods/nick/README.md)) |
