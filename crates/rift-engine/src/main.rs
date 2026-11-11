@@ -16,7 +16,10 @@ static ALLOCATOR: horizon_threads::Allocator = horizon_threads::ALLOCATOR;
 fn main() {
     // Every mod with its name, in the order the engine runs their hooks: the first to cancel
     // stops the ones after it.
-    let mods: Vec<(&'static str, Box<dyn Hooks>)> = vec![(sculkstorm::ID, sculkstorm::hooks())];
+    let mods: Vec<(&'static str, Box<dyn Hooks>)> = vec![
+        (sculkstorm::ID, sculkstorm::hooks()),
+        (viewdistance::ID, viewdistance::hooks()),
+    ];
     // The names a crash report and a log line give a mod's hooks by. The engine keeps them for the
     // whole run, and this is the only call, so the list is leaked rather than copied.
     let names: &'static [&'static str] = Box::leak(mods.iter().map(|(id, _)| *id).collect());

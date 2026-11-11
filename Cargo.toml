@@ -46,6 +46,7 @@ members = [
     "crates/rift-engine",
     # Rift's own mods, one crate each, linked into rift-engine.
     "rift-mods/sculkstorm",
+    "rift-mods/viewdistance",
     "xtask",
 ]
 resolver = "2"

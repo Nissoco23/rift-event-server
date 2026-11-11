@@ -83,6 +83,7 @@ Game workspace (root `Cargo.toml`). The launcher and the other Horizon-only crat
 | `horizon-chat-filter`, `horizon-mcp` | The dedicated server's chat filter ([docs/chat-filter.md](docs/chat-filter.md)); the Model Context Protocol shared by `horizon-server` and `horizon-ctl` |
 | `rift-engine` | The server's engine program: the engine's `main` with every mod of `rift-mods/` handed to it; `scripts/build.sh` copies it to `dist/rift-engine` ([docs/rift-mods.md](docs/rift-mods.md)) |
 | `sculkstorm` (in `rift-mods/`) | The Sculkstorm Scythe, a native mod: Sculk Cataclysm and Soulstorm Ascension ([README](rift-mods/sculkstorm/README.md)) |
+| `viewdistance` (in `rift-mods/`) | A native mod that limits how far each player is sent chunks: one distance for players, another for operators ([README](rift-mods/viewdistance/README.md)) |
 
 Other top-level folders: `scripts/` (`build.sh`), `tools/` (harnesses and dev scripts), `tests/` (Python unit tests: `python3 -m
 unittest discover -s tests`), `mods/horizon/src/test/java/dev/horizonlab/parity/` (Java oracles), `rift-mods/` (Rift's own

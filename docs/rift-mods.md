@@ -41,3 +41,5 @@ job.
 
 - [Sculkstorm](../rift-mods/sculkstorm/README.md): the Sculkstorm Scythe, with Sculk Cataclysm and
   Soulstorm Ascension.
+- [ViewDistance](../rift-mods/viewdistance/README.md): a view distance limit for players and another for
+  operators.
