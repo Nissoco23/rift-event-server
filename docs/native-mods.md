@@ -5324,9 +5324,11 @@ Every `Host` method defaults to a panic naming it (`not implemented: Host::tell`
 only what its hook calls, and an unexpected call fails loudly. Drive the hook through
 `horizon_client::mod_api::dispatch_<hook>(&mut host, &mods, args…)`, which builds the event as the game does.
 If a `Host` method returns a game value a test can't build, a double can return `None` instead, as with
-`acting_player() -> Option<NativeServerPlayer>`. If the dispatch function itself takes an unconstructible value,
-such as `dispatch_perform_command`'s `&NativeServerPlayer`, test the logic beneath the hook instead. The level
-hosts are small enough to implement whole. NeoForge's GameTest is the in-game counterpart.
+`acting_player() -> Option<NativeServerPlayer>`. A `NativeServerPlayer`, which `dispatch_perform_command` takes
+and `server_players()` gives, is made with `NativeServerPlayer::new(uuid, name, permission)` and its public fields
+set after (`player.fake = true`); the context of `dispatch_server_tick` is `NativeLifecycleContext::new(authority,
+epoch, tick)`. If the dispatch function takes another value a test can't build, test the logic beneath the hook
+instead. The level hosts are small enough to implement whole. NeoForge's GameTest is the in-game counterpart.
 
 ```rust
 struct Stone;

@@ -731,6 +731,49 @@ pub struct NativeServerPlayer {
     pub gliding: bool,
 }
 
+impl NativeServerPlayer {
+    /// A player standing at the origin of the overworld in survival, at full health, with the
+    /// abilities and speeds of a new player, `permission` as their operator level and nothing a
+    /// mod set. The struct grows fields, so a mod cannot build it with a literal; its tests make
+    /// one with this and set the pub fields that matter (`player.dimension = ...`).
+    #[doc(hidden)]
+    pub fn new(uuid: u128, name: &str, permission: u8) -> Self {
+        Self {
+            uuid,
+            name: name.to_owned(),
+            permission,
+            dimension: "minecraft:overworld".to_owned(),
+            position: [0.0; 3],
+            game_mode: 0,
+            health: 20.0,
+            yaw: 0.0,
+            pitch: 0.0,
+            entity_id: 0,
+            address: String::new(),
+            latency: 0,
+            protocol: horizon_protocol::PROTOCOL_VERSION,
+            xp_level: 0,
+            xp_progress: 0.0,
+            on_ground: true,
+            flying: false,
+            may_fly: false,
+            invulnerable: false,
+            walk_speed: 0.1,
+            fly_speed: 0.05,
+            sneaking: false,
+            eye_height: 1.62,
+            selected_slot: 0,
+            nickname: None,
+            hidden: None,
+            fake: false,
+            using_item: false,
+            blocking: false,
+            sprinting: false,
+            gliding: false,
+        }
+    }
+}
+
 /// What a player's client told the server about itself, and what the server sent it
 /// (`native_player_client`). API @API:player_client@.
 #[derive(Clone, Debug, PartialEq)]
@@ -1008,6 +1051,20 @@ pub struct NativeLifecycleContext {
     pub authority: NativeAuthority,
     pub epoch: NativeWorldEpoch,
     pub tick: NativeTickId,
+}
+
+impl NativeLifecycleContext {
+    /// The context of the server tick numbered `tick` in the world opened as `epoch`. The struct
+    /// grows fields, so a mod cannot build it with a literal: its tests make the contexts of
+    /// `dispatch_server_tick` with this.
+    #[doc(hidden)]
+    pub fn new(authority: NativeAuthority, epoch: NativeWorldEpoch, tick: u64) -> Self {
+        Self {
+            authority,
+            epoch,
+            tick: NativeTickId::new(tick),
+        }
+    }
 }
 
 /// The ordered list of mods shared by the client and server.
