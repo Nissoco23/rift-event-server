@@ -45,6 +45,7 @@ members = [
     # The engine program of the server, with the mods of rift-mods/ linked in (docs/rift-mods.md).
     "crates/rift-engine",
     # Rift's own mods, one crate each, linked into rift-engine.
+    "rift-mods/nick",
     "rift-mods/sculkstorm",
     "rift-mods/viewdistance",
     "xtask",

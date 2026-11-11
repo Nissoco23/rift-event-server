@@ -2635,6 +2635,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nick"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3689,6 +3699,7 @@ version = "0.1.0"
 dependencies = [
  "horizon-client",
  "horizon-threads",
+ "nick",
  "sculkstorm",
  "viewdistance",
 ]

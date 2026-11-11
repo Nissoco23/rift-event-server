@@ -43,3 +43,5 @@ job.
   Soulstorm Ascension.
 - [ViewDistance](../rift-mods/viewdistance/README.md): a view distance limit for players and another for
   operators.
+- [Nick](../rift-mods/nick/README.md): operator nicknames with another account's skin, and a pool of names
+  for random ones.
