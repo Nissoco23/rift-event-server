@@ -1452,6 +1452,7 @@ impl Game<'_> {
         hub.flat_world = self.world_flat;
         hub.debug_world = self.world_debug;
         let port = hub.lan.port;
+        self.nicknames.clear();
         self.world.block_log = Some(Vec::new());
         self.world.light_log = Some(Default::default());
         self.lan = Some(LanHost {
@@ -1506,6 +1507,7 @@ impl Game<'_> {
         };
         self.award_leave_game_to_all(&mut host);
         self.save_leaving_guests(&mut host);
+        self.nicknames.clear();
         host.hub.disconnect_all();
         // Give the network threads a moment to flush the disconnect packets.
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -2313,6 +2315,11 @@ impl Game<'_> {
                         self.lan = Some(host);
                         self.native_player_logged_out(guest.uuid, &guest.name);
                         host = self.lan.take()?;
+                    }
+                    // The hub dropped their nickname as it sent the leave line; the lines above
+                    // still named them by it, and a connection of theirs that took over keeps it.
+                    if !host.hub.guests.iter().any(|g| g.uuid == guest.uuid) {
+                        self.nicknames.remove(&guest.uuid);
                     }
                 }
                 HostEvent::Flight { conn, flying } => {

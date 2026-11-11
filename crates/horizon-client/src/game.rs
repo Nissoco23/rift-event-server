@@ -3058,6 +3058,12 @@ struct Game<'a> {
     lan_acting_name: Option<String>,
     /// Their UUID (`Player.getUUID`).
     lan_acting_uuid: Option<u128>,
+    /// The nicknames mods gave the players (`native_set_nickname`), by UUID: a copy of the
+    /// hub's (`Hub::nicknames`), here for the reason `guest_attachments` is: while a guest
+    /// acts the hub is out of `self.lan`, and the lines their turn writes (a death, an
+    /// advancement, command feedback) must still name every player as the others know them.
+    /// Dropped once the player's leave has been handled.
+    nicknames: HashMap<u128, String>,
     /// The player and the stack on their cursor as they clicked a native
     /// menu, while `native_menu_clicked` hears it (`native_menu_cursor`).
     native_click_cursor: Option<(u128, Option<horizon_client::items::ItemStack>)>,
@@ -12083,6 +12089,7 @@ impl<'a> Game<'a> {
             guest_player_sounds: Vec::new(),
             lan_acting_name: None,
             lan_acting_uuid: None,
+            nicknames: HashMap::new(),
             native_click_cursor: None,
             tnt_refused: None,
             lan_acting_permission: None,

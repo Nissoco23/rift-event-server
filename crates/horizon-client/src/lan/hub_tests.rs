@@ -1376,3 +1376,230 @@ fn memory_connection_first_view_sends_every_ready_column() {
         "an empty queue sends nothing"
     );
 }
+
+/// A second placed guest in a hub of [`hub_with_a_guest`], and what it is sent.
+fn add_guest(
+    hub: &mut Hub,
+    conn: u32,
+    uuid: u128,
+    name: &str,
+) -> std::sync::mpsc::Receiver<crate::lan::Out> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut guest = Guest::new(
+        crate::lan::Joined {
+            conn,
+            uuid,
+            name: name.into(),
+            properties: Vec::new(),
+            info: horizon_protocol::packets::configuration::ClientInformation::new(8),
+            brand: "vanilla".into(),
+            sender: crate::lan::PlayerSender::new(tx, std::sync::Arc::default()),
+            latency: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(0)),
+            address: "127.0.0.1:25565".parse().unwrap(),
+            expected: false,
+            configured: Default::default(),
+        },
+        conn as i32,
+        [0.5, 64.0, 0.5],
+        8,
+    );
+    guest.placed = true;
+    guest.dimension = "minecraft:overworld".into();
+    hub.guests.push(guest);
+    rx
+}
+
+/// The chat lines a guest was sent.
+fn chat_lines(rx: &std::sync::mpsc::Receiver<crate::lan::Out>) -> Vec<Tag> {
+    let mut lines = Vec::new();
+    while let Ok(out) = rx.try_recv() {
+        let crate::lan::Out::Packet(body) = out else {
+            continue;
+        };
+        let mut r = horizon_protocol::buf::Reader::new(&body);
+        let id = r.varint().unwrap();
+        if let C::SystemChat(chat) = C::decode(id, r.rest()).unwrap() {
+            lines.push(chat.content);
+        }
+    }
+    lines
+}
+
+/// Everything a text says: its words, its keys, and `ints:` for every UUID array.
+fn said(tag: &Tag) -> Vec<String> {
+    fn walk(tag: &Tag, out: &mut Vec<String>) {
+        match tag {
+            Tag::String(s) => out.push(s.to_string_lossy()),
+            Tag::IntArray(words) => out.push(format!("ints:{words:?}")),
+            Tag::List(items) => items.iter().for_each(|t| walk(t, out)),
+            Tag::Compound(map) => {
+                for (key, value) in map {
+                    out.push(key.to_string_lossy());
+                    walk(value, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    walk(tag, &mut out);
+    out
+}
+
+/// Whether a text names `word` (any case) or carries a UUID array.
+fn names(tag: &Tag, word: &str) -> bool {
+    said(tag)
+        .iter()
+        .any(|s| s.starts_with("ints:") || s.to_lowercase().contains(&word.to_lowercase()))
+}
+
+const BOBS_UUID: &str = "00000000-0000-0000-0000-000000000001";
+
+#[test]
+fn what_clicking_and_hovering_a_name_carry() {
+    let plain = identity_fields("Bob", 1, None);
+    assert_eq!(
+        plain,
+        [
+            (
+                "click_event",
+                serde_json::json!({"action": "suggest_command", "command": "/tell Bob "})
+            ),
+            (
+                "hover_event",
+                serde_json::json!({"action": "show_entity", "id": "minecraft:player",
+                    "uuid": BOBS_UUID, "name": "Bob"})
+            ),
+            ("insertion", serde_json::json!("Bob")),
+        ]
+    );
+    // A nickname masks the player: no hover, and the click and insertion name the nickname.
+    assert_eq!(
+        identity_fields("Bob", 1, Some("Captain")),
+        [
+            (
+                "click_event",
+                serde_json::json!({"action": "suggest_command", "command": "/tell Captain "})
+            ),
+            ("insertion", serde_json::json!("Captain")),
+        ]
+    );
+}
+
+#[test]
+fn a_nickname_hides_the_player_in_the_name_chat_shows() {
+    let (mut hub, _rx) = hub_with_a_guest();
+    let plain = hub.player_display_name(1, "Bob");
+    assert!(names(&plain, "Bob"), "without a nickname the name is Bob");
+    assert!(plain.get("hover_event").is_some());
+
+    hub.set_nickname(1, Some("Captain".into()));
+    let masked = hub.player_display_name(1, "Bob");
+    let word = |tag: Option<&Tag>| match tag {
+        Some(Tag::String(s)) => s.to_string_lossy(),
+        other => panic!("not a string: {other:?}"),
+    };
+    assert_eq!(word(masked.get("text")), "Captain");
+    assert_eq!(word(masked.get("insertion")), "Captain");
+    assert_eq!(
+        word(masked.get("click_event").and_then(|c| c.get("command"))),
+        "/tell Captain "
+    );
+    assert!(
+        !names(&masked, "Bob") && !names(&masked, BOBS_UUID),
+        "{masked:?} gives the player away"
+    );
+    assert!(masked.get("hover_event").is_none());
+
+    hub.set_nickname(1, None);
+    assert!(names(&hub.player_display_name(1, "Bob"), "Bob"));
+}
+
+/// The team formats the shown name; the team is still the one of the real name.
+#[test]
+fn a_nicknamed_player_keeps_their_team_but_not_their_name() {
+    let (mut hub, _rx) = hub_with_a_guest();
+    let mut board = crate::scoreboard::Scoreboard::default();
+    board.add_team("red").prefix = crate::scoreboard::literal("[Red] ");
+    board.add_to_team("Bob", "red");
+    hub.teams = board.teams.clone();
+    hub.set_nickname(1, Some("Captain".into()));
+
+    let shown = hub.player_display_name(1, "Bob");
+    let words = said(&shown);
+    assert!(words.contains(&"[Red] ".to_owned()), "{words:?}");
+    assert!(words.contains(&"Captain".to_owned()), "{words:?}");
+    assert!(
+        !names(&shown, "Bob") && shown.get("hover_event").is_none(),
+        "{shown:?}"
+    );
+}
+
+/// The leave line is written as the others knew the player, and the nickname and the name tag
+/// end with the session: when they join again they are announced, listed and shown as themselves.
+#[test]
+fn leaving_ends_a_nickname_after_the_leave_line_has_used_it() {
+    let (mut hub, _bob) = hub_with_a_guest();
+    let alice = add_guest(&mut hub, 2, 2, "Alice");
+    hub.set_nickname(1, Some("Captain".into()));
+    hub.set_name_tag(1, Some("Captain".into()));
+    let _ = chat_lines(&alice);
+
+    let gone = hub.remove_guest(0, "left");
+    assert_eq!(gone.name, "Bob");
+    let lines = chat_lines(&alice);
+    assert_eq!(lines.len(), 1, "one leave line");
+    assert_eq!(
+        lines[0].get("translate"),
+        Some(&Tag::String("multiplayer.player.left".into()))
+    );
+    assert!(said(&lines[0]).contains(&"Captain".to_owned()));
+    assert!(!names(&lines[0], "Bob"), "{:?}", lines[0]);
+    assert!(hub.nicknames.is_empty() && hub.name_tags.is_empty());
+    assert!(names(&hub.player_display_name(1, "Bob"), "Bob"));
+}
+
+/// A held player (a proxy's hand-over that never reached the world) has no leave line, but the
+/// session's names go with it too.
+#[test]
+fn a_player_who_was_never_placed_leaves_without_their_names_staying() {
+    let (mut hub, _bob) = hub_with_a_guest();
+    let alice = add_guest(&mut hub, 2, 2, "Alice");
+    hub.guests[0].placed = false;
+    hub.set_nickname(1, Some("Captain".into()));
+    let _ = chat_lines(&alice);
+
+    hub.remove_guest(0, "dropped");
+    assert!(chat_lines(&alice).is_empty());
+    assert!(hub.nicknames.is_empty());
+}
+
+/// Another connection of the same player (a login that took over) keeps the session's names
+/// when the old one goes.
+#[test]
+fn a_connection_that_took_over_keeps_the_nickname() {
+    let (mut hub, _old) = hub_with_a_guest();
+    let _new = add_guest(&mut hub, 3, 1, "Bob");
+    hub.set_nickname(1, Some("Captain".into()));
+    hub.remove_guest(0, "duplicate login");
+    assert_eq!(hub.nicknames.get(&1).map(String::as_str), Some("Captain"));
+}
+
+#[test]
+fn list_uuids_tells_only_operators_who_a_nickname_is() {
+    let (mut hub, _rx) = hub_with_a_guest();
+    let before = hub.list_reply(true, false);
+    assert!(names(&before, "Bob") && names(&before, BOBS_UUID));
+
+    hub.set_nickname(1, Some("Captain".into()));
+    for uuids in [false, true] {
+        let seen = hub.list_reply(uuids, false);
+        assert!(said(&seen).contains(&"Captain".to_owned()), "{seen:?}");
+        assert!(
+            !names(&seen, "Bob") && !names(&seen, BOBS_UUID),
+            "/list shows a nicknamed player as {seen:?}"
+        );
+    }
+    let operator = hub.list_reply(true, true);
+    assert!(names(&operator, "Bob") && names(&operator, BOBS_UUID));
+}

@@ -3695,7 +3695,8 @@ impl Game<'_> {
         // ListPlayersCommand needs no permission and lists every player.
         let words: Vec<&str> = command.trim_start_matches('/').split(' ').collect();
         if words[0] == "list" && (words.len() == 1 || words[1..] == ["uuids"]) {
-            let content = host.hub.list_reply(words.len() == 2);
+            let operator = host.hub.guest(conn).is_some_and(|g| g.permission > 0);
+            let content = host.hub.list_reply(words.len() == 2, operator);
             host.hub.send_to(
                 conn,
                 &C::SystemChat(play::SystemChat {

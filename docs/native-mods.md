@@ -913,7 +913,7 @@ API 61 adds mods' own sound events in `native_play_sound`: an event of another n
 name, as vanilla sends a sound that isn't in its registry, and they hear it when their resources define it (a content mod's `assets/mymod/sounds.json`
 and its `.ogg` files). `minecraft:` events must still be registered. Bundles that play their own sounds need `"hooks": 61`.
 
-API 62 adds nicknames for server mods: `native_set_nickname(uuid, Option<&str>)` shows a name in place of a player's in chat (their messages, `/me`, `/msg`) and the Tab list, the real name on hover and everywhere else; `native_text_allowed(text)` asks the server's chat filter. Both outside a player's hook. Bundles need "hooks": 62.
+API 62 adds nicknames for server mods: `native_set_nickname(uuid, Option<&str>)` shows a name in place of a player's in chat (their messages, `/me`, `/msg`), the Tab list and the lines the server writes about them (death and advancement lines, `/list`, command feedback). The name hides the player: hovering it shows nothing of them, clicking it suggests `/tell` with the nickname (which reaches them), and `/list uuids` lists them by it for players who are not operators. The real name stays in the log, commands, selectors and the server's events. A nickname ends when the player leaves. `native_text_allowed(text)` asks the server's chat filter. Both outside a player's hook. Bundles need "hooks": 62.
 
 API 63 adds context-free block and item tag lookups from server hooks (`native_server_block_in_tag`, `native_server_item_in_tag`). They return `NotServer` on a client and `TagsUnavailable` before the world loads its tags. An unknown tag returns false; an empty stack tests `minecraft:air`. Bundles need "hooks": 63.
 
@@ -3250,7 +3250,8 @@ injections before.
   place of their nickname or name, as Bukkit's `Player.setDisplayName`: their chat messages, `/me`, `/msg` both ways
   and the lines that they joined or left; None shows the nickname or name again. Their team's prefix, suffix and colour
   still go around it; hovering it gives the real name, which `/tell` is suggested with and which stays in the log,
-  commands and selectors. The Tab list keeps `native_set_list_name`'s or the nickname. Kept by UUID until a mod sets
+  commands and selectors (a nickname hides the real name from the hover and the suggestion). The Tab list keeps
+  `native_set_list_name`'s or the nickname. Kept by UUID until a mod sets
   it again or the server stops. Outside a player's hook; false there and when they aren't on. Bundles need
   `"hooks": @API:set_display_name@`.
 - Helper **`native_set_name_tag(uuid, tag)`** (`host.set_name_tag`): a plain name over that player's head for everyone
@@ -3259,8 +3260,8 @@ injections before.
   spaces, no colours (a team's formatting applies only while the team lists the shown name). The other players'
   clients get their entry and entity again at once (a blink), and their Tab list shows the tag unless a list name or
   nickname covers it; their own client reads it from their next join. Chat, commands, selectors, the log and the
-  server's events keep the real name. Kept by UUID until a mod sets it again or the server stops. Outside a player's
-  hook; false there, when they aren't on and for a tag that isn't one. Bundles need `"hooks": @API:set_name_tag@`.
+  server's events keep the real name. Kept by UUID until a mod sets it again, the player leaves or the server stops.
+  Outside a player's hook; false there, when they aren't on and for a tag that isn't one. Bundles need `"hooks": @API:set_name_tag@`.
 
 #### Server hooks for plugin ports: NPCs
 

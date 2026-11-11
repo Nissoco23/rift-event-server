@@ -145,24 +145,23 @@ impl Game<'_> {
     }
 
     /// `Player.getDisplayName`: the name as its team shows it, suggesting a
-    /// `/tell`, showing the player on hover, inserting the name.
+    /// `/tell`, showing the player on hover, inserting the name. Horizon: a
+    /// nickname a mod gave the player (`Game::nicknames`) takes the name's place, and
+    /// with it the hover, the `/tell` and the insertion
+    /// (`horizon_client::lan::hub::identity_fields`), so no line the server writes
+    /// gives the player away. The team is still the one of the real name.
     pub(in crate::game) fn player_text(&self, name: &str, uuid: u128) -> Text {
+        let nickname = self.nicknames.get(&uuid).map(String::as_str);
+        let literal = Text::literal(nickname.unwrap_or(name));
         let shown = match self.score.board.players_team(name) {
-            Some(team) => team.formatted_name(Text::literal(name)),
-            None => Text::literal(name),
+            Some(team) => team.formatted_name(literal),
+            None => literal,
         };
-        shown.with_component_fields(vec![
-            (
-                "click_event".into(),
-                serde_json::json!({"action": "suggest_command", "command": format!("/tell {name} ")}),
-            ),
-            (
-                "hover_event".into(),
-                serde_json::json!({"action": "show_entity", "id": "minecraft:player",
-                    "uuid": horizon_protocol::crypto::uuid_string(uuid), "name": name}),
-            ),
-            ("insertion".into(), name.into()),
-        ])
+        let fields = horizon_client::lan::hub::identity_fields(name, uuid, nickname)
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), value))
+            .collect();
+        shown.with_component_fields(fields)
     }
 
     /// Run `f` for the player `t` (None for anything else): in place, or

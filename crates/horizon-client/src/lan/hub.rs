@@ -478,6 +478,32 @@ pub fn display_name(uuid: u128, name: &str) -> Tag {
     ])
 }
 
+/// What clicking, hovering over and shift-clicking a player's shown name carry
+/// (`Player.getDisplayName`): a `/tell` suggestion, the player's entity (their name and
+/// UUID) and the text to insert. A nickname masks the player, so with one the hover is left
+/// out and the click and the insertion name the nickname: nothing in the line gives the
+/// player away, and `/tell <nickname>` still reaches them (`player_named`).
+pub fn identity_fields(
+    name: &str,
+    uuid: u128,
+    nickname: Option<&str>,
+) -> Vec<(&'static str, serde_json::Value)> {
+    let shown = nickname.unwrap_or(name);
+    let mut fields = vec![(
+        "click_event",
+        serde_json::json!({"action": "suggest_command", "command": format!("/tell {shown} ")}),
+    )];
+    if nickname.is_none() {
+        fields.push((
+            "hover_event",
+            serde_json::json!({"action": "show_entity", "id": "minecraft:player",
+                "uuid": horizon_protocol::crypto::uuid_string(uuid), "name": name}),
+        ));
+    }
+    fields.push(("insertion", shown.into()));
+    fields
+}
+
 /// `ChunkMap.getPlayerViewDistance`: `Mth.clamp(requested, 2, server)` (Java's max then min
 /// order also handles a management value below two without panicking when the bounds cross),
 /// under a native mod's limit for the player.
@@ -538,14 +564,16 @@ impl Hub {
     /// Player.getDisplayName: the name formatted for the player's team
     /// (PlayerTeam.formatNameForTeam), suggesting `/tell NAME `, showing the
     /// player on hover and inserting the name.
-    /// A nickname (`nicknames`) takes the name's place in the text; the
-    /// hover, the suggested `/tell` and the insertion keep the real name.
+    /// A nickname (`nicknames`) takes the name's place in the text, and with it
+    /// the hover, the suggested `/tell` and the insertion: they name the
+    /// nickname, so the line does not give the player away ([`identity_fields`]).
     /// A mod's display name (`display_names`) takes the place of both.
     pub fn player_display_name(&self, uuid: u128, name: &str) -> Tag {
-        let shown = self.nicknames.get(&uuid).map_or(name, String::as_str);
+        let nickname = self.nicknames.get(&uuid).map(String::as_str);
+        let shown = nickname.unwrap_or(name);
         let custom = self.display_names.get(&uuid);
         let team = self.teams.iter().find(|t| t.players.contains(name));
-        if team.is_none() && shown == name && custom.is_none() {
+        if team.is_none() && nickname.is_none() && custom.is_none() {
             return display_name(uuid, name);
         }
         let mut c = match (team, custom) {
@@ -555,11 +583,9 @@ impl Hub {
             (None, Some(custom)) => serde_json::json!({ "text": "", "extra": [custom] }),
             (None, None) => serde_json::json!({ "text": shown }),
         };
-        c["click_event"] =
-            serde_json::json!({"action": "suggest_command", "command": format!("/tell {name} ")});
-        c["hover_event"] = serde_json::json!({"action": "show_entity", "id": "minecraft:player",
-            "uuid": horizon_protocol::crypto::uuid_string(uuid), "name": name});
-        c["insertion"] = name.into();
+        for (key, value) in identity_fields(name, uuid, nickname) {
+            c[key] = value;
+        }
         crate::scoreboard::component_tag(&c)
     }
 }
@@ -1092,8 +1118,11 @@ impl Hub {
     /// ListPlayersCommand's reply: the players in join order (the host of a
     /// LAN world first), as display names (Player.getDisplayName, with the
     /// team's colour and affixes) or names with ids, joined by
-    /// gray commas (ComponentUtils.formatList).
-    pub fn list_reply(&self, uuids: bool) -> Tag {
+    /// gray commas (ComponentUtils.formatList). Horizon: a nicknamed player is
+    /// listed by their display name either way, since their real name and id
+    /// are what a nickname hides, unless `reveal`: an operator asked, who is
+    /// the one allowed to know.
+    pub fn list_reply(&self, uuids: bool, reveal: bool) -> Tag {
         let players: Vec<(u128, &str)> = self
             .guests
             .iter()
@@ -1101,7 +1130,7 @@ impl Hub {
             .map(|g| (g.uuid, g.name.as_str()))
             .collect();
         let format = |(uuid, name): (u128, &str)| {
-            if uuids {
+            if uuids && (reveal || !self.nicknames.contains_key(&uuid)) {
                 Tag::compound([
                     ("translate", string("commands.list.nameAndId")),
                     (
@@ -2567,6 +2596,7 @@ impl Hub {
         if !self.guests.iter().any(|o| o.uuid == g.uuid) {
             self.compass_targets.remove(&g.uuid);
         }
+        let gone = self.leaving(g.uuid);
         if let Some(m) = g
             .menu
             .as_ref()
@@ -2595,6 +2625,7 @@ impl Hub {
             log::info!("[lan] {} left: {reason}", g.name);
         }
         if !g.placed {
+            self.leaving_done(gone);
             return g;
         }
         // `PlayerList.remove`: the entities it tracked stop (`removePairing`).
@@ -2628,7 +2659,24 @@ impl Hub {
                 o.sender.send(left.clone());
             }
         }
+        self.leaving_done(gone);
         g
+    }
+
+    /// The player `uuid` is leaving for good (no other connection holds it): whether their
+    /// session's names, a nickname and a name tag, go with them once their leave line has
+    /// named them as the others knew them ([`Self::leaving_done`]).
+    fn leaving(&self, uuid: u128) -> Option<u128> {
+        (!self.guests.iter().any(|o| o.uuid == uuid)).then_some(uuid)
+    }
+
+    /// A nickname and a name tag last as long as the player's session: the next time they join
+    /// they are announced, listed and shown under their own name.
+    fn leaving_done(&mut self, gone: Option<u128>) {
+        if let Some(uuid) = gone {
+            self.nicknames.remove(&uuid);
+            self.name_tags.remove(&uuid);
+        }
     }
 
     /// Takes the frozen player `uuid` out of the world because a proxy moved it to another
