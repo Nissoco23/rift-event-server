@@ -911,7 +911,7 @@ mod tests {
     // ---- who: selectors ------------------------------------------------------------------
 
     #[test]
-    fn a_selector_for_many_skips_operators_and_admin_means_only_them() {
+    fn a_selector_for_many_skips_operators_and_the_admin_flag_means_only_them() {
         let mut rig = Rig::with_players();
         assert_eq!(
             rig.run(ALICE, "nick random @a"),
@@ -935,15 +935,15 @@ mod tests {
             refused("...ick off @a", "None of them has a nickname set")
         );
 
-        rig.run(ALICE, "nick random admin");
+        rig.run(ALICE, "nick random --admin");
         assert!(rig.nickname(ALICE).is_some());
         assert_eq!(
             names(&rig, &[BOB, EVE]),
             [None, None],
-            "admin is the operators"
+            "--admin is the operators"
         );
         assert_eq!(
-            rig.run(ALICE, "nick off admin"),
+            rig.run(ALICE, "nick off --admin"),
             ["Removed nicknames from 1 player!"]
         );
         assert_eq!(rig.nickname(ALICE), None);
@@ -1046,16 +1046,16 @@ mod tests {
             ops.answer(ALICE, "nick random @a"),
             refused(
                 "...random @a",
-                "No player was found: operators are skipped, use /nick random admin to target them"
+                "No player was found: operators are skipped, use /nick random --admin to target them"
             )
         );
         let mut none = Rig::plain();
         none.join("Bob", BOB, 0);
         none.host.feedback.clear();
-        assert!(none.console("nick off admin"));
+        assert!(none.console("nick off --admin"));
         assert_eq!(
             none.host.feedback,
-            refused("...off admin", "No operator is online")
+            refused("...ff --admin", "No operator is online")
         );
     }
 
@@ -1256,7 +1256,7 @@ mod tests {
             ops.answer(ALICE, "/nick  random   @a"),
             refused(
                 "...random @a",
-                "No player was found: operators are skipped, use /nick random admin to target them"
+                "No player was found: operators are skipped, use /nick random --admin to target them"
             ),
             "folded to single spaces, with no slash"
         );
@@ -1646,7 +1646,7 @@ mod tests {
             rig.answer(ALICE, "nick"),
             refused(
                 "nick",
-                "Usage: /nick <name> | <player> <name> | off [players|admin] | random [players|admin] | info <nickname> | list | pool add|remove|check [name] | reload"
+                "Usage: /nick <name> | <player> <name> | off [players|--admin] | random [players|--admin] | info <nickname> | list | pool add|remove|check [name] | reload"
             )
         );
     }

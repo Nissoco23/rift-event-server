@@ -17,9 +17,9 @@ const USAGES: [&str; 16] = [
     "nick <name:word>",
     "nick <target:player> <name:word>",
     "nick off [targets:players]",
-    "nick off admin",
+    "nick off --admin",
     "nick random [targets:players]",
-    "nick random admin",
+    "nick random --admin",
     "nick info <nickname:word?>",
     "nick list",
     "nick reload",
@@ -32,7 +32,7 @@ const USAGES: [&str; 16] = [
     "nickonjoin all",
 ];
 
-const USAGE: &str = "Usage: /nick <name> | <player> <name> | off [players|admin] | random [players|admin] | info <nickname> | list | pool add|remove|check [name] | reload";
+const USAGE: &str = "Usage: /nick <name> | <player> <name> | off [players|--admin] | random [players|--admin] | info <nickname> | list | pool add|remove|check [name] | reload";
 
 /// The command's usages, for the players' command trees.
 pub fn register(commands: &mut Vec<NativeCommand>, level: u8) {
@@ -75,7 +75,7 @@ pub enum Command {
 }
 
 fn targets(word: &str) -> Targets {
-    if word.eq_ignore_ascii_case("admin") {
+    if word.eq_ignore_ascii_case("--admin") {
         Targets::Admin
     } else {
         Targets::Spec(word.to_owned())
@@ -189,10 +189,10 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
 // ---- who -----------------------------------------------------------------------------------
 
 /// The players a word names: a name or a nickname (a leading `~` is the name chat shows), `@s`,
-/// `@p`, `@r` or `@a`. The two selectors for many players, `@a` and `admin`, skip operators or mean
+/// `@p`, `@r` or `@a`. The two selectors for many players, `@a` and `--admin`, skip operators or mean
 /// only them; `@s` and a name are the player whoever they are. Options in brackets are not read.
 /// The errors are markup. `verb` is the command (`off` or `random`) that `@a` points an operator's
-/// way to `admin` with.
+/// way to `--admin` with.
 fn select(
     state: &mut State,
     actor: &Actor,
@@ -251,7 +251,7 @@ fn select(
             let all = ordinary(state);
             if all.is_empty() {
                 Err(format!(
-                    "No player was found: operators are skipped, use <accent><click:run_command:'/nick {verb} admin'>/nick {verb} admin</click></accent> to target them"
+                    "No player was found: operators are skipped, use <accent><click:run_command:'/nick {verb} --admin'>/nick {verb} --admin</click></accent> to target them"
                 ))
             } else {
                 Ok(all)
@@ -820,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn off_and_random_take_nobody_a_name_a_selector_or_admin() {
+    fn off_and_random_take_nobody_a_name_a_selector_or_admin_flag() {
         assert_eq!(parse("nick off"), Some(Command::Off(Targets::Own)));
         assert_eq!(
             parse("nick off Bob"),
@@ -830,14 +830,22 @@ mod tests {
             parse("nick off @a"),
             Some(Command::Off(Targets::Spec("@a".into())))
         );
-        assert_eq!(parse("nick off ADMIN"), Some(Command::Off(Targets::Admin)));
+        assert_eq!(
+            parse("nick off --ADMIN"),
+            Some(Command::Off(Targets::Admin))
+        );
+        // The bare word is no longer the flag: it is a name like any other.
+        assert_eq!(
+            parse("nick off admin"),
+            Some(Command::Off(Targets::Spec("admin".into())))
+        );
         assert_eq!(parse("nick random"), Some(Command::Random(Targets::Own)));
         assert_eq!(
             parse("nick random @r"),
             Some(Command::Random(Targets::Spec("@r".into())))
         );
         assert_eq!(
-            parse("nick random admin"),
+            parse("nick random --admin"),
             Some(Command::Random(Targets::Admin))
         );
     }
@@ -915,6 +923,6 @@ mod tests {
         assert!(usages.contains(&"nick <target:player> <name:word>"));
         assert!(usages.contains(&"nick off [targets:players]"));
         assert!(usages.contains(&"nick random [targets:players]"));
-        assert!(usages.contains(&"nick off admin") && usages.contains(&"nick random admin"));
+        assert!(usages.contains(&"nick off --admin") && usages.contains(&"nick random --admin"));
     }
 }

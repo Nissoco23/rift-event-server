@@ -17,7 +17,7 @@ pub struct Config {
     /// The operator level `/nick` needs (`ops.json`): 1 to 4.
     pub command_level: u8,
     /// The lowest operator level that counts as an operator, for `@a`, `@p` and `@r` to skip and
-    /// for `admin` to mean: 1 to 4.
+    /// for `--admin` to mean: 1 to 4.
     pub op_level: u8,
     /// The fewest characters a nickname may have: 1 to 16.
     pub min_length: usize,
@@ -96,7 +96,7 @@ enabled = true
 # The operator level /nick needs: 2 is a game master. A permissions mod can grant `nick.admin` instead.
 command-level = 2
 
-# The lowest operator level that counts as an operator: @a, @p and @r skip them, `admin` means them.
+# The lowest operator level that counts as an operator: @a, @p and @r skip them, `--admin` means them.
 op-level = 1
 
 # How long a nickname may be. Mojang's own names have 3 to 16 characters; 1 or 2 are for legacy accounts.

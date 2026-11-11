@@ -17,7 +17,7 @@ All of it is for operators of level 2 (the console too), or whoever a permission
 | `/nick <player> <name>` | Nicknames that player. Says so if they are not on the server. |
 | `/nick off [players]` | Takes the nickname off you, or off the players named. Says so if there is none. |
 | `/nick random [players]` | Gives you, or the players named, a random nickname from the pool. |
-| `/nick off admin`, `/nick random admin` | The same for every operator online. |
+| `/nick off --admin`, `/nick random --admin` | The same for every operator online. |
 | `/nick info <nickname>` | Who the nickname really is: real name, UUID, who set it, whose skin. A real name works too. |
 | `/nick list` | Every nickname in force, with the real name and UUID. |
 | `/nick pool add <name>` | Puts an account in the pool, after checking it exists and keeping its skin. |
@@ -27,7 +27,7 @@ All of it is for operators of level 2 (the console too), or whoever a permission
 | `/nickonjoin [off\|on\|all]` | Who gets a random nickname as they join: `on` (the default each start) everyone but operators, `all` operators too, `off` no one. Alone, says the setting. The setting is not saved: a server starts with `on`. |
 
 `players` is a name (the real one, or the nickname), `@s`, `@p`, `@r` or `@a`. `@a`, `@p` and `@r`
-skip operators; `admin` is the operators; `@s` and a name reach anyone, operators included. A selector
+skip operators; `--admin` is the operators; `@s` and a name reach anyone, operators included. A selector
 with options in brackets is refused. The console has no `@s` or `@p`.
 
 ### Nicknames
@@ -86,7 +86,7 @@ place.
 | --- | --- | --- |
 | `enabled` | `true` | Off, `/nick` says so and every nickname in force is taken off. |
 | `command-level` | `2` | The operator level `/nick` needs (1 to 4). |
-| `op-level` | `1` | The lowest level that counts as an operator for `@a`, `@p`, `@r` and `admin`. |
+| `op-level` | `1` | The lowest level that counts as an operator for `@a`, `@p`, `@r` and `--admin`. |
 | `min-length`, `max-length` | `1`, `16` | How long a nickname may be. |
 | `skin-cache-minutes` | `10` | How long a skin the services gave is remembered. |
 
