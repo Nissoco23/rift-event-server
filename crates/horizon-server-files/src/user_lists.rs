@@ -465,7 +465,7 @@ impl<E: Entry> UserList<E> {
     }
     /// StoredUserList.load: a missing file leaves the list as it is.
     pub fn load(&mut self) -> Result<(), String> {
-        let Ok(text) = std::fs::read_to_string(&self.file) else {
+        let Ok(text) = read_utf8(&self.file) else {
             return Ok(());
         };
         self.load_str(&text)
@@ -494,6 +494,13 @@ pub type OpList = UserList<OpEntry>;
 pub type WhiteList = UserList<WhiteEntry>;
 pub type BanList = UserList<BanEntry<NameAndId>>;
 pub type IpBanList = UserList<BanEntry<String>>;
+
+/// A list or cache file as vanilla reads it, through Guava's `Files.newReader(file, UTF_8)`: a byte
+/// sequence that is not UTF-8 becomes U+FFFD and the rest is kept. A file that cannot be read at all is
+/// an error, as before.
+pub(crate) fn read_utf8(file: &std::path::Path) -> std::io::Result<String> {
+    Ok(String::from_utf8_lossy(&std::fs::read(file)?).into_owned())
+}
 
 #[cfg(test)]
 mod tests {
@@ -648,6 +655,36 @@ mod tests {
         assert!(bans.add(ban.clone()));
         assert!(!bans.add(ban));
         assert_eq!(*said.lock().unwrap(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `StoredUserList.load` reads through Guava's `Files.newReader(file, UTF_8)`: a byte that is not
+    /// UTF-8 becomes U+FFFD (vanilla's reader gave `0043 0061 0066 fffd` for `Caf\xE9`), so the entry is
+    /// kept, and the next save writes it back with the others instead of losing the file.
+    #[test]
+    fn a_byte_that_is_not_utf8_is_replaced_not_a_missing_file() {
+        let dir = std::env::temp_dir().join(format!("horizon-lists-latin1-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("whitelist.json");
+        let mut bytes = br#"[{"uuid":"069a79f4-44e9-4726-a5be-fca90e38aaf5","name":"Caf"#.to_vec();
+        bytes.extend(b"\xE9\"}]");
+        std::fs::write(&file, &bytes).unwrap();
+        let mut white = WhiteList::new(&file);
+        white.load().unwrap();
+        let names: Vec<String> = white
+            .entries()
+            .iter()
+            .map(|e| e.user.name.clone())
+            .collect();
+        assert_eq!(names, ["Caf\u{fffd}"]);
+        assert!(white.add(WhiteEntry {
+            user: NameAndId::offline("Kim")
+        }));
+        let saved = std::fs::read_to_string(&file).unwrap();
+        assert!(
+            saved.contains("Caf\u{fffd}") && saved.contains("Kim"),
+            "{saved}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
