@@ -472,6 +472,23 @@ mod tests {
         assert_eq!(s.kick("d", Check::Ground, 1), (1, true));
     }
 
+    /// The counts are kept across restarts while `server.toml` may change: a player already past a
+    /// `ban_after` that was lowered, or set on a check that never banned, is banned at its next kick.
+    #[test]
+    fn a_player_past_a_lowered_ban_after_is_banned_at_the_next_kick() {
+        let mut s = Strikes::default();
+        assert_eq!(s.kick("a", Check::Combat, 3), (1, false));
+        assert_eq!(s.kick("a", Check::Combat, 3), (2, false));
+        // `ban_after = 3` lowered to 1.
+        assert_eq!(s.kick("a", Check::Combat, 1), (3, true));
+        for _ in 0..4 {
+            s.kick("b", Check::Timer, 0);
+        }
+        // `timer` given `ban_after = 2` after four kicks that never banned.
+        assert_eq!(s.kick("b", Check::Timer, 2), (5, true));
+        assert_eq!(s.kick("b", Check::Timer, 2), (1, false));
+    }
+
     #[test]
     fn zero_turns_an_action_off() {
         let mut c = on();
