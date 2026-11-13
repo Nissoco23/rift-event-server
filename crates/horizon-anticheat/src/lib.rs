@@ -479,4 +479,25 @@ mod tests {
         let mut p = Player::default();
         assert!(!p.flag(&c, Check::Timer, 1000.0, 1).kick);
     }
+
+    /// Every check's `setback`, `alert`, `kick` and `decay` must be a number from 0 up: a negative,
+    /// NaN or infinite one is refused with an error naming the check, as the section's other
+    /// mistakes are; 0 is allowed (the action off, or no decay).
+    #[test]
+    fn every_checks_thresholds_and_decay_are_numbers_from_0_up() {
+        for &check in Check::ALL {
+            for key in ["setback", "alert", "kick", "decay"] {
+                for bad in ["-1", "nan", "inf"] {
+                    let text = format!("[anticheat.{}]\n{key} = {bad}\n", check.name());
+                    let e = Config::from_server_toml(&text).expect_err(&text);
+                    assert!(
+                        e.starts_with(&format!("anticheat.{}:", check.name())),
+                        "{text}: {e}"
+                    );
+                }
+                let zero = format!("[anticheat.{}]\n{key} = 0\n", check.name());
+                assert!(Config::from_server_toml(&zero).is_ok(), "{zero}");
+            }
+        }
+    }
 }
