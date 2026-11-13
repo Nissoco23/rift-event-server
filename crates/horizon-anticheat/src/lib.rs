@@ -377,6 +377,30 @@ mod tests {
         assert!(!Config::from_server_toml(off).unwrap().runs(Check::Timer));
     }
 
+    /// Each check's own table, found by the check's name, turns that check off and sets its
+    /// thresholds, and leaves every other check as it was.
+    #[test]
+    fn each_checks_table_is_its_own() {
+        for &check in Check::ALL {
+            let text = format!("[anticheat.{}]\nenabled = false\nkick = 7\n", check.name());
+            let c = Config::from_server_toml(&text).unwrap();
+            for &other in Check::ALL {
+                let (runs, kick) = (c.runs(other), c.actions(other).kick);
+                if other == check {
+                    assert!(!runs && kick == 7.0, "{}", check.name());
+                } else {
+                    let default = Config::default().actions(other).kick;
+                    assert!(
+                        runs && kick == default,
+                        "{} off: {}",
+                        check.name(),
+                        other.name()
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn refuses_unknown_keys_and_negative_levels() {
         assert!(Config::from_server_toml("[anticheat]\nenable = true\n").is_err());
