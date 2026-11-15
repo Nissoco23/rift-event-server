@@ -2771,8 +2771,8 @@ pub fn accepts_damage(m: &mut Mob, source: &Damage, _amount: f32) -> bool {
         }
         // Wolf.hurtServer, Parrot.hurtServer: a hit it isn't invulnerable to
         // stands it up before LivingEntity.hurtServer, even one the hurt
-        // frames then turn away.
-        Species::Wolf | Species::Parrot => {
+        // frames then turn away. A tamed rabbit (a Rift addition) does the same.
+        Species::Wolf | Species::Parrot | Species::Rabbit => {
             super::tame::stand_when_hurt(m);
             true
         }

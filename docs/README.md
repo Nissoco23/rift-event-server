@@ -44,6 +44,7 @@ start with [the README](../README.md).
   against vanilla and Pumpkin, and the plan. [Server against Pumpkin](performance/server-vs-pumpkin.md).
 - [World generation](world-generation.md), [world height](world-height.md), [world data](world-data.md).
 - [Resource preparation](launcher-preparation.md): the Java exporters and `rift-prepare`.
+- [Rift additions](rift-additions.md): where the engine deliberately differs from vanilla (tameable rabbits).
 - [Known issues](known-issues.md), [profiling](profiling.md) and [build times](build-times.md).
 - [Shader-pack clean room](cleanroom/README.md): how the shader-pack support was written, and the provenance
   log of every source read.

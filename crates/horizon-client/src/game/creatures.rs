@@ -4074,6 +4074,12 @@ impl Game<'_> {
                 self.breeding_orb(parent, [p.position.x, p.position.y, p.position.z]);
                 return;
             }
+            // A tamed rabbit's baby (a Rift addition) is tamed too, its owner the parent's.
+            if p.species() == Species::Rabbit && p.extra.tame {
+                child.extra.tame = true;
+                child.extra.owner = p.extra.owner;
+                child.persistent = true;
+            }
             // Nautilus.getBreedOffspring: a tame parent's baby is tame too.
             if p.species() == Species::Nautilus && p.extra.tame {
                 child.extra.tame = true;
@@ -6617,6 +6623,8 @@ impl Game<'_> {
         let mut shear_puff: Option<([f64; 3], f64)> = None;
         // `Ocelot.mobInteract`: whether the fish won its trust.
         let mut ocelot_trust: Option<bool> = None;
+        // A rabbit's taming try (a Rift addition): whether the carrot won it over.
+        let mut rabbit_taming: Option<bool> = None;
         match species {
             Species::Cow | Species::Mooshroom if item == "minecraft:bucket" && !m.is_baby() => {
                 give = Some("minecraft:milk_bucket");
@@ -7011,6 +7019,47 @@ impl Game<'_> {
                     self.trigger_entity("minecraft:tame_animal", "entity", &view);
                 }
             }
+            // Rabbits can be tamed in Rift, as wolves are (vanilla's are not tamable): a carrot
+            // wins a wild one over a third of the time, and then it follows its owner.
+            Species::Rabbit if !m.extra.tame && &*item == "minecraft:carrot" => {
+                consume = true;
+                eat = eating_sound(m, &mut self.world.random);
+                let tamed = m.random.next_int_bound(3).unwrap_or(1) == 0;
+                if tamed {
+                    m.extra.tame = true;
+                    m.extra.owner = Some(acting);
+                    m.persistent = true;
+                    m.nav_stop();
+                    m.ai.target = None;
+                }
+                rabbit_taming = Some(tamed);
+            }
+            // A tamed rabbit's food heals it, as a cat's does (`TamableAnimal.feed`), until it is
+            // whole; then `Animal.mobInteract` breeds it.
+            Species::Rabbit if m.extra.tame && is_food && m.health < m.attrs.max_health => {
+                let heal = self
+                    .res
+                    .items()
+                    .get(&item)
+                    .and_then(|i| i.food.as_ref())
+                    .map_or(1.0, |f| f.0 as f32);
+                m.heal(heal);
+                consume = true;
+                eat = eating_sound(m, &mut self.world.random);
+            }
+            // The owner makes a tamed rabbit sit or stand, as a cat's owner does, unless the
+            // click is feeding it for breeding.
+            Species::Rabbit
+                if m.extra.tame && m.extra.owner == Some(acting) && !(is_food && takes_food(m)) =>
+            {
+                m.extra.sitting = !m.extra.sitting;
+                m.ai.jumping = false;
+                m.nav_stop();
+                self.world.modified.insert((
+                    m.position.x.floor() as i32 >> 4,
+                    m.position.z.floor() as i32 >> 4,
+                ));
+            }
             // Dolphin.mobInteract: a fish makes a baby grow by a tenth and an
             // adult remember it (`gotFish`), to swim to a treasure.
             Species::Dolphin if fish => {
@@ -7124,6 +7173,37 @@ impl Game<'_> {
         if let Some(trusts) = ocelot_trust {
             // `spawnTrustingParticles` on the clients: entity event 41 (hearts) or 40 (smoke).
             self.mob_event_particles(self.mobs[index].id, if trusts { 41 } else { 40 });
+        }
+        if let Some(tamed) = rabbit_taming {
+            if tamed {
+                // Entity event 18 draws love hearts on any animal's client, a rabbit's too; the
+                // wolf's event 7 is a `TamableAnimal`'s, which a rabbit's client is not.
+                self.mob_event_particles(self.mobs[index].id, 18);
+                let view = self.mob_entity(&self.mobs[index]);
+                self.trigger_entity("minecraft:tame_animal", "entity", &view);
+            } else {
+                // `TamableAnimal.spawnTamingParticles`' smoke, as particles.
+                let options = ParticleOptions::simple(ParticleType::Smoke);
+                let at = [feet[0], feet[1] + 0.5, feet[2]];
+                let (spread, count) = ([0.3, 0.3, 0.3], 7);
+                self.particles
+                    .send_particles(&options, at, spread, 0.02, count);
+                self.lan_send_particles(super::lan_particles::QueuedParticle {
+                    dimension: self.dim.id(),
+                    options,
+                    state: None,
+                    at,
+                    spread,
+                    speed: [0.02; 3],
+                    count: count as i32,
+                    randomization: 0,
+                });
+            }
+            let m = &self.mobs[index];
+            self.world.modified.insert((
+                m.position.x.floor() as i32 >> 4,
+                m.position.z.floor() as i32 >> 4,
+            ));
         }
         if let Some(fresh) = stew_particles {
             // `SpellParticleOption.create(EFFECT, -1, 1)` is the plain white

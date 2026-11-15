@@ -103,6 +103,15 @@ pub fn register(m: &mut Mob) {
         ),
     );
 }
+/// What a rabbit gets of a pet's goals: it sits when told to and follows its owner from ten blocks
+/// away, as a wolf does, teleporting to an owner twelve blocks off. A Rift addition: vanilla
+/// rabbits cannot be tamed. Both goals do nothing until the rabbit has an owner, so a wild one is
+/// as vanilla's.
+pub fn add_pet_goals(m: &mut Mob) {
+    let g = &mut m.ai.goals;
+    g.add(2, SitWhenOrdered);
+    g.add(5, FollowOwner::new(1.0, 10.0, 2.0));
+}
 /// `Parrot.registerGoals`: a tamed parrot sits when told to and follows its
 /// owner from five blocks away; it wanders to trees (`ParrotWanderGoal`) and
 /// lands on its owner's shoulder.
