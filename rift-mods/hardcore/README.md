@@ -1,10 +1,11 @@
 # Hardcore
 
 The hardcore rules of Rift Event Server, as a native Rust mod: death protection that holds an operator's health
-above a floor, what happens to a player who dies (kicked, put in spectator mode, or nothing) and what the
-others are told about it. Nothing needs installing on the players' side. It is made of this crate and four
+above a floor, what happens to a player who dies (kicked, put in spectator mode, or nothing), what the
+others are told about it, and death cycling, which brings a player who dies straight back as someone else. Nothing needs installing on the players' side. It is made of this crate and four
 things the engine gives mods for it: `native_living_damage_pre_v2`, `native_player_death_message`,
-`native_set_membership_lines` and the hub's `names_within` ([docs/native-mods.md](../../docs/native-mods.md)).
+`native_set_membership_lines`, `native_player_death_loot`, `native_world_spawn` and the hub's `names_within`
+([docs/native-mods.md](../../docs/native-mods.md)).
 
 ## Using it
 
@@ -20,6 +21,13 @@ A player below that level gets vanilla's "unknown command".
 | `/ondeath admin [spectate\|kick\|none]` | The same for operators (level 2 and up). `spectate` by default. |
 | `/deathmsg [none\|death\|leave]` | What the others are told of a death. `leave` by default. |
 | `/deathmsgradius [blocks]` | How far a death message travels. 150 by default. `0` is the player who died alone, `-1` everyone. |
+| `/cycledeath` | Whether death cycling is on, and its settings. |
+| `/cycledeath on\|off` | Turns it on or off. |
+| `/cycledeath mode deathpoint\|spawnpoint` | Where cycled players respawn: around where they died, or around the spawn point. |
+| `/cycledeath setspawn [x y z]` | The spawn point `spawnpoint` mode is around; with no coordinates, where you stand (`~` works). The world spawn until one is set. |
+| `/cycledeath inventory drop\|keep\|both` | What a cycled death does to the inventory. |
+| `/cycledeath distance <blocks>` | How far (0 to 100000). 150 by default. |
+| `/cycledeath exempt <player>` | Leaves a player out of death cycling, or puts them back. Not saved. |
 
 ### Death protection
 
@@ -79,11 +87,44 @@ dying player too; the server log always has the death message):
 Nothing is told when the `showDeathMessages` game rule is off, whatever `/deathmsg` says. The dying player's own
 death screen keeps the death message.
 
+## Death cycling
+
+For a scene with few players: a player who dies comes back at once, somewhere else, under a new name, so there
+seem to be more of them. It is for everyone, operators included, except the players `/cycledeath exempt` leaves
+out, who die by `/ondeath` as before. A mod's bots are left alone.
+
+- **Where.** The overworld, always, on the surface with no block above (a treetop counts) and not on water, lava
+  or anything that burns. In `deathpoint` mode a random direction at the set distance from where they died (150
+  blocks by default); in `spawnpoint` mode a random point within the distance of the spawn point (the world
+  spawn until `/cycledeath setspawn` sets one). A player who dies in another dimension is respawned in the
+  overworld at the same x and z.
+- **At once.** A spot is found while a player lives (its chunk is asked for and held loaded, and its surface read),
+  so a death does not wait for one; `deathpoint` spots are found again when a player has moved 16 blocks, and
+  every spot when a setting changes. The mod respawns the player the tick after they die, with no click. A death
+  with no spot ready (a player who has just joined, or whose spots keep failing) shows the death screen until one
+  is.
+- **A new name.** Once they are back they get a random nickname as `/nick random` gives it, whatever
+  `/nickonjoin` says. The death message and the leave line still use the name they died under.
+- **Inventory.** `drop`: it drops and they lose it. `keep`: it stays and nothing drops. `both`: it stays and a copy
+  of it drops. Their experience always behaves as in a vanilla death that drops: orbs worth 7 points a level, 100
+  at most, are dropped and their levels start again from nothing, whatever the setting or the `keep_inventory`
+  game rule.
+- **`/ondeath`.** While death cycling is on it says so, and refuses to change either setting; they are
+  as they were when it is turned off.
+- A player's health and food start over, as in any respawn, and the game mode stays what it was.
+
+## Status and action messages
+
+What a command says about a state ("Death cycling is on", `/ondeath` with no word, "Death protection is already
+enabled") is gray, with the copper accent on what matters; what a command that does something says ("Death cycling has
+been enabled", `/ondeath kick`) is white with the accent.
+
 ## What is saved
 
 `config/hardcore.toml`, written by the mod each time a command changes it: the `deathmsg` and
-`deathmsgradius` settings, and under `[protection]` each player's switch and level by UUID (a player who is back
-to the default is not kept). `/ondeath` is not saved. A file that cannot be read is moved to
+`deathmsgradius` settings, under `[protection]` each player's switch and level by UUID (a player who is back
+to the default is not kept), and under `[cycle]` death cycling's settings. `/ondeath` and the exempt players are not
+saved. A file that cannot be read is moved to
 `hardcore.toml.broken` and the log says so; the defaults hold, and the next change writes a fresh file.
 
 ## Tests

@@ -548,6 +548,17 @@ out: call it from a tick hook and try again at the next if it was refused. The h
 ([README](../rift-mods/hardcore/README.md)) is built on these. API @API:player_death_message@ and
 @API:membership_lines@.
 
+### What a death does to the inventory
+
+`native_player_death_loot(player, name, keep_inventory, drop_inventory, drop_experience, keep_experience)` is asked
+once for each server player's death (`ServerPlayer.die`), before the loot is dropped, with what the `keep_inventory`
+game rule says: the inventory kept and not dropped, or dropped and not kept; the experience dropped and not kept, or
+kept and not dropped. A mod may set each. Kept and dropped leaves the inventory with the player and throws a copy of
+it (what vanishes is not copied); neither takes it away and throws nothing. `drop_experience` throws the experience
+as orbs, 7 points a level and 100 at most, and `keep_experience` gives it back at the respawn. A spectator drops and
+keeps as in vanilla. `native_world_spawn()` is the block of the world spawn (`/setworldspawn`). API
+@API:player_death_loot@ and @API:world_spawn@.
+
 ### The build's warnings
 
 Before it builds, the launcher reads the mods' `[[injection]]` lists and says three things in `native/build.log` that

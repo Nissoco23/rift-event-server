@@ -15,6 +15,12 @@ impl Rng {
         Self::new(nanos)
     }
 
+    /// A number from 0 up to, but not including, 1.
+    pub fn unit(&mut self) -> f64 {
+        const STEPS: u32 = 1 << 24;
+        f64::from(self.below(STEPS)) / f64::from(STEPS)
+    }
+
     /// A number in `0..n` (0 for `n` of 0).
     pub fn below(&mut self, n: u32) -> u32 {
         if n == 0 {

@@ -5,13 +5,15 @@
 //! `dispatch_*` functions, so what the tests exercise is what the server runs.
 
 use horizon_client::mod_api::{
-    Hooks, Host, NativeCommand, NativeServerPlayer, Suggestion, Text, dispatch_level_tick_post,
-    dispatch_living_damage_pre_v2, dispatch_perform_command, dispatch_perform_console_command,
+    Hooks, Host, NativeChunkLoad, NativeColumnBlocks, NativeCommand, NativeHeightmap,
+    NativeServerPlayer, Suggestion, Text, dispatch_level_tick_post, dispatch_living_damage_pre_v2,
+    dispatch_perform_command, dispatch_perform_console_command, dispatch_player_death_loot,
     dispatch_player_death_message, dispatch_player_died_v2, dispatch_player_logged_out,
     dispatch_player_respawn_position, dispatch_player_respawned, dispatch_register_commands,
     dispatch_tab_complete_v2,
 };
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -35,6 +37,22 @@ pub struct FakeHost {
     pub lines: Vec<bool>,
     /// The engine cannot reach the hub: the join and leave lines are refused.
     pub hub_away: bool,
+    /// The world spawn.
+    pub world_spawn: Option<[i32; 3]>,
+    /// Chunks asked for, by who asked: the ticks left before each is loaded.
+    pub requests: HashMap<(String, [i32; 2]), u32>,
+    /// Ticks a chunk takes to load.
+    pub chunk_delay: u32,
+    /// Every chunk let go.
+    pub released: Vec<(String, [i32; 2])>,
+    /// Every `respawn_player`.
+    pub respawns: Vec<u128>,
+    /// Every mod command run as the console.
+    pub commands: Vec<String>,
+    /// The ground at a column: its height (the first free block) and the block that tops it.
+    pub ground: Box<dyn Fn(i32, i32) -> (i32, String)>,
+    /// Columns whose chunk is never loaded.
+    pub failing: HashSet<[i32; 2]>,
     logs: RefCell<Vec<String>>,
     dir: PathBuf,
 }
@@ -70,6 +88,87 @@ impl Host for FakeHost {
 
     fn config_dir(&self) -> Result<PathBuf, String> {
         Ok(self.dir.join("config"))
+    }
+
+    fn world_spawn(&self) -> Option<[i32; 3]> {
+        self.world_spawn
+    }
+
+    fn chunk_load_request(&mut self, owner: &str, dimension: &str, chunk: [i32; 2]) -> bool {
+        assert_eq!(dimension, OVERWORLD);
+        if self.failing.contains(&chunk) {
+            return false;
+        }
+        let key = (owner.to_owned(), chunk);
+        if self.requests.contains_key(&key) {
+            return false;
+        }
+        self.requests.insert(key, self.chunk_delay);
+        true
+    }
+
+    fn chunk_load_state(&self, owner: &str, _dimension: &str, chunk: [i32; 2]) -> NativeChunkLoad {
+        match self.requests.get(&(owner.to_owned(), chunk)) {
+            None => NativeChunkLoad::Failed,
+            Some(0) => NativeChunkLoad::Loaded,
+            Some(_) => NativeChunkLoad::Pending,
+        }
+    }
+
+    fn chunk_load_release(&mut self, owner: &str, _dimension: &str, chunk: [i32; 2]) -> bool {
+        self.released.push((owner.to_owned(), chunk));
+        self.requests.remove(&(owner.to_owned(), chunk)).is_some()
+    }
+
+    fn read_columns(
+        &self,
+        dimension: &str,
+        columns: &[(i32, i32)],
+        heightmap: NativeHeightmap,
+        range: (u32, u32),
+    ) -> Result<NativeColumnBlocks, String> {
+        assert_eq!(dimension, OVERWORLD);
+        assert_eq!(heightmap, NativeHeightmap::MotionBlocking);
+        assert_eq!(
+            range,
+            (2, 2),
+            "the mod reads two under the height and two over it"
+        );
+        let mut out = NativeColumnBlocks {
+            palette: vec![
+                "minecraft:stone".to_owned(),
+                String::new(),
+                "minecraft:air".to_owned(),
+            ],
+            ..Default::default()
+        };
+        for (x, z) in columns {
+            let loaded = self
+                .requests
+                .iter()
+                .any(|((_, chunk), left)| *left == 0 && *chunk == [x >> 4, z >> 4]);
+            if !loaded {
+                out.bases.push(None);
+                out.blocks.extend([2, 2, 2, 2]);
+                continue;
+            }
+            let (height, top) = (self.ground)(*x, *z);
+            out.palette[1] = top;
+            out.bases.push(Some(height));
+            out.blocks.extend([0, 1, 2, 2]);
+            out.tints.extend([0, 0, 0]);
+        }
+        Ok(out)
+    }
+
+    fn respawn_player(&mut self, uuid: u128) -> bool {
+        self.respawns.push(uuid);
+        true
+    }
+
+    fn run_mod_command(&mut self, line: &str) -> bool {
+        self.commands.push(line.to_owned());
+        true
     }
 
     fn log(&self, level: &str, line: &str) {
@@ -113,6 +212,14 @@ impl Rig {
                 game_modes: Vec::new(),
                 lines: Vec::new(),
                 hub_away: false,
+                world_spawn: Some([10, 64, 20]),
+                requests: HashMap::new(),
+                chunk_delay: 0,
+                released: Vec::new(),
+                respawns: Vec::new(),
+                commands: Vec::new(),
+                ground: Box::new(|_, _| (70, "minecraft:grass_block".to_owned())),
+                failing: HashSet::new(),
                 logs: RefCell::new(Vec::new()),
                 dir: dir.clone(),
             },
@@ -170,9 +277,44 @@ impl Rig {
         commands
     }
 
-    /// A tick of the overworld.
+    /// A tick of the overworld: chunks being loaded come a tick nearer.
     pub fn tick(&mut self) {
+        for left in self.host.requests.values_mut() {
+            *left = left.saturating_sub(1);
+        }
         dispatch_level_tick_post(&mut self.host, &self.mods, OVERWORLD);
+    }
+
+    pub fn ticks(&mut self, n: u32) {
+        for _ in 0..n {
+            self.tick();
+        }
+    }
+
+    /// What a death does to the inventory and the experience, as the engine's rule starts them
+    /// (`keep_inventory` off) and the mod leaves them: kept, dropped, experience dropped and
+    /// kept.
+    pub fn loot(&mut self, uuid: u128) -> (bool, bool, bool, bool) {
+        let name = self
+            .host
+            .players
+            .iter()
+            .find(|p| p.uuid == uuid)
+            .unwrap()
+            .name
+            .clone();
+        let (mut keep, mut drop, mut xp, mut keep_xp) = (false, true, true, false);
+        dispatch_player_death_loot(
+            &mut self.host,
+            &self.mods,
+            uuid,
+            &name,
+            &mut keep,
+            &mut drop,
+            &mut xp,
+            &mut keep_xp,
+        );
+        (keep, drop, xp, keep_xp)
     }
 
     /// A player types a line: what the mod answered, none when it was not for the mod.
@@ -1127,7 +1269,7 @@ mod scenarios {
         said(r.say(OP, "deathprotect off bob"));
         said(r.say(OP, "deathmsgradius 150"));
         let file = r.file().unwrap();
-        assert!(!file.contains("enabled"), "{file}");
+        assert!(!file.contains("[protection."), "{file}");
     }
 
     // ---- the command tree ------------------------------------------------------------------
@@ -1136,7 +1278,7 @@ mod scenarios {
     fn every_usage_is_for_operators_and_has_a_permission_node() {
         let mut r = rig();
         let commands = r.register();
-        assert_eq!(commands.len(), 19);
+        assert_eq!(commands.len(), 31);
         for c in &commands {
             assert_eq!(c.level, 2, "{}", c.usage);
             assert_eq!(
@@ -1196,5 +1338,769 @@ mod scenarios {
         ] {
             assert_eq!(r.complete(OP, line), ["Op", "Bob", "Alice"], "{line}");
         }
+    }
+}
+
+#[cfg(test)]
+mod cycling {
+    use super::*;
+    use crate::cycle::owner;
+
+    /// An operator and two players, with a tick seen, and death cycling on.
+    fn rig() -> Rig {
+        let mut r = Rig::new();
+        r.join("Op", OP, 4);
+        r.join("Bob", BOB, 0);
+        r.join("Alice", ALICE, 0);
+        r.tick();
+        r.say(OP, "cycledeath on").unwrap();
+        r
+    }
+
+    fn said(lines: Option<Vec<String>>) -> Vec<String> {
+        lines.expect("the mod took the command")
+    }
+
+    fn reason(lines: &[String]) -> String {
+        assert_eq!(lines.len(), 2, "an error is two lines: {lines:?}");
+        assert_eq!(
+            lines[0],
+            "Unknown or incomplete command. See below for error"
+        );
+        let (_, rest) = lines[1].split_once("<--[").expect("the reason");
+        rest.strip_suffix(']').unwrap().to_owned()
+    }
+
+    /// The colours a say line was drawn in, as (text, colour).
+    fn colours(r: &Rig, line: usize) -> Vec<(String, Option<u32>)> {
+        r.host.styled[line]
+            .spans
+            .iter()
+            .map(|s| (s.text.clone(), s.style.color))
+            .collect()
+    }
+
+    fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+        ((a[0] - b[0]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
+    }
+
+    // ---- the commands ----------------------------------------------------------------------
+
+    #[test]
+    fn the_status_shows_whether_it_is_on_and_the_settings_in_gray_with_the_accent() {
+        let mut r = Rig::new();
+        r.join("Op", OP, 4);
+        r.join("Bob", BOB, 0);
+        r.tick();
+        assert_eq!(
+            said(r.say(OP, "cycledeath")),
+            [
+                "Death cycling is off",
+                "Mode: deathpoint, 150 blocks from where they died",
+                "Inventory: drop, and up to 100 points of experience always drop",
+                "Exempt: nobody"
+            ]
+        );
+        for line in 0..4 {
+            assert_eq!(colours(&r, line)[0].1, Some(rift_chat::GRAY), "line {line}");
+        }
+        // The state is in the accent.
+        assert_eq!(
+            colours(&r, 0),
+            [
+                ("Death cycling is ".to_owned(), Some(rift_chat::GRAY)),
+                ("off".to_owned(), Some(rift_chat::ACCENT)),
+            ]
+        );
+        said(r.say(OP, "cycledeath on"));
+        said(r.say(OP, "cycledeath mode spawnpoint"));
+        said(r.say(OP, "cycledeath distance 80"));
+        said(r.say(OP, "cycledeath setspawn 100 65 -20"));
+        said(r.say(OP, "cycledeath inventory both"));
+        said(r.say(OP, "cycledeath exempt bob"));
+        assert_eq!(
+            said(r.say(OP, "cycledeath")),
+            [
+                "Death cycling is on",
+                "Mode: spawnpoint, within 80 blocks of 100, 65, -20",
+                "Inventory: both, and up to 100 points of experience always drop",
+                "Exempt: Bob"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_spawn_point_is_the_world_spawn_until_one_is_set() {
+        let mut r = rig();
+        said(r.say(OP, "cycledeath mode spawnpoint"));
+        assert_eq!(
+            said(r.say(OP, "cycledeath"))[1],
+            "Mode: spawnpoint, within 150 blocks of the world spawn"
+        );
+    }
+
+    #[test]
+    fn on_and_off_say_what_they_did_and_when_nothing_changed_say_so_in_gray() {
+        let mut r = Rig::new();
+        r.join("Op", OP, 4);
+        r.tick();
+        assert_eq!(
+            said(r.say(OP, "cycledeath on")),
+            ["Death cycling has been enabled"]
+        );
+        assert_eq!(colours(&r, 0)[0].1, Some(rift_chat::WHITE));
+        assert_eq!(
+            said(r.say(OP, "cycledeath on")),
+            ["Death cycling is already enabled"]
+        );
+        assert_eq!(colours(&r, 0)[0].1, Some(rift_chat::GRAY));
+        assert_eq!(
+            said(r.say(OP, "cycledeath off")),
+            ["Death cycling has been disabled"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath off")),
+            ["Death cycling is already disabled"]
+        );
+    }
+
+    #[test]
+    fn the_mode_the_inventory_and_the_distance_are_set_and_a_repeat_is_told() {
+        let mut r = rig();
+        assert_eq!(
+            said(r.say(OP, "cycledeath mode spawnpoint")),
+            ["Death cycled players now respawn around the spawn point"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath mode spawnpoint")),
+            ["Death cycled players already respawn around the spawn point"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath mode deathpoint")),
+            ["Death cycled players now respawn around where they died"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath inventory keep")),
+            ["Death cycled players now keep their inventory and drop nothing"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath inventory both")),
+            ["Death cycled players now keep their inventory and drop a copy of it"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath inventory both")),
+            ["Death cycled players already keep their inventory and drop a copy of it"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath inventory drop")),
+            ["Death cycled players now drop their inventory"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath distance 300")),
+            ["Death cycle distance set to 300 blocks"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath distance 300")),
+            ["The death cycle distance is already 300 blocks"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath distance 1")),
+            ["Death cycle distance set to 1 block"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath distance 0")),
+            ["Death cycle distance set to 0 blocks"]
+        );
+    }
+
+    #[test]
+    fn a_distance_must_be_a_whole_number_from_zero_to_the_most() {
+        let mut r = rig();
+        for (typed, why) in [
+            ("-1", "The distance cannot be below 0"),
+            ("-150", "The distance cannot be below 0"),
+            ("100001", "The distance cannot be more than 100000 blocks"),
+            (
+                "99999999999999999999",
+                "The distance must be a whole number of blocks",
+            ),
+            ("abc", "The distance must be a whole number of blocks"),
+            ("1.5", "The distance must be a whole number of blocks"),
+        ] {
+            let lines = said(r.say(OP, &format!("cycledeath distance {typed}")));
+            assert_eq!(reason(&lines), why, "{typed}");
+        }
+        // Nothing changed, and the most is allowed.
+        assert_eq!(
+            said(r.say(OP, "cycledeath"))[1],
+            "Mode: deathpoint, 150 blocks from where they died"
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath distance 100000")),
+            ["Death cycle distance set to 100000 blocks"]
+        );
+    }
+
+    #[test]
+    fn a_word_that_is_not_a_mode_or_an_inventory_is_an_error() {
+        let mut r = rig();
+        let lines = said(r.say(OP, "cycledeath mode nearby"));
+        assert_eq!(
+            reason(&lines),
+            "Usage: /cycledeath mode <deathpoint|spawnpoint>"
+        );
+        let lines = said(r.say(OP, "cycledeath inventory some"));
+        assert_eq!(
+            reason(&lines),
+            "Usage: /cycledeath inventory <drop|keep|both>"
+        );
+        for line in [
+            "cycledeath mode",
+            "cycledeath on now",
+            "cycledeath setspawn 1 2",
+            "cycledeath exempt",
+            "cycledeath wat",
+        ] {
+            let lines = said(r.say(OP, line));
+            assert!(
+                reason(&lines).starts_with("Usage: /cycledeath"),
+                "{line}: {lines:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_spawn_point_is_where_you_stand_or_the_coordinates_you_give() {
+        let mut r = rig();
+        r.player_mut(OP).position = [12.7, 65.0, -30.2];
+        assert_eq!(
+            said(r.say(OP, "cycledeath setspawn")),
+            ["Death cycle spawn point set to 12, 65, -31"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath setspawn 100 70 -200")),
+            ["Death cycle spawn point set to 100, 70, -200"]
+        );
+        // `~` is the one who ran it, as in vanilla.
+        assert_eq!(
+            said(r.say(OP, "cycledeath setspawn ~ ~2 ~-5")),
+            ["Death cycle spawn point set to 12, 67, -36"]
+        );
+        let lines = said(r.say(OP, "cycledeath setspawn 1 up 3"));
+        assert_eq!(
+            reason(&lines),
+            "The coordinate must be a number, or ~ for yours"
+        );
+        let lines = said(r.say(OP, "cycledeath setspawn 1 2 99999999"));
+        assert_eq!(reason(&lines), "That is outside the world");
+        // The console has no position, and no `~`.
+        let lines = said(r.console("cycledeath setspawn"));
+        assert!(
+            reason(&lines).starts_with("The console has no position"),
+            "{lines:?}"
+        );
+        let lines = said(r.console("cycledeath setspawn ~ 1 1"));
+        assert_eq!(reason(&lines), "The console has no position for ~");
+        assert_eq!(
+            said(r.console("cycledeath setspawn 0 64 0")),
+            ["Death cycle spawn point set to 0, 64, 0"]
+        );
+    }
+
+    #[test]
+    fn a_player_can_be_exempted_and_exempted_no_more() {
+        let mut r = rig();
+        r.player_mut(BOB).nickname = Some("Captain".to_owned());
+        r.tick();
+        assert_eq!(
+            said(r.say(OP, "cycledeath exempt bob")),
+            ["Captain is now exempt from death cycling"]
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath exempt captain")),
+            ["Captain is no longer exempt from death cycling"]
+        );
+        let lines = said(r.say(OP, "cycledeath exempt nobody"));
+        assert_eq!(reason(&lines), "Player was not found");
+        let lines = said(r.say(OP, "cycledeath exempt @a"));
+        assert_eq!(
+            reason(&lines),
+            "One player only here: name one, or use @s, @p or @r"
+        );
+        assert_eq!(
+            said(r.say(OP, "cycledeath exempt @s")),
+            ["Op is now exempt from death cycling"]
+        );
+    }
+
+    #[test]
+    fn an_exempt_player_completes_by_nickname_and_the_other_words_by_the_client() {
+        let mut r = rig();
+        r.player_mut(BOB).nickname = Some("Captain".to_owned());
+        r.tick();
+        assert_eq!(
+            r.complete(OP, "cycledeath exempt "),
+            ["Alice", "Captain", "Op", "@p", "@r", "@s"]
+        );
+        assert_eq!(r.complete(OP, "cycledeath exempt c"), ["Captain"]);
+        assert_eq!(r.complete(OP, "cycledeath mode "), ["Op", "Bob", "Alice"]);
+    }
+
+    #[test]
+    fn the_cycle_usages_are_for_operators() {
+        let mut r = rig();
+        let commands = r.register();
+        let usages: Vec<&str> = commands.iter().map(|c| c.usage.as_str()).collect();
+        for wanted in [
+            "cycledeath",
+            "cycledeath mode spawnpoint",
+            "cycledeath setspawn <pos:block_pos>",
+            "cycledeath inventory both",
+            "cycledeath distance <blocks:integer>",
+            "cycledeath exempt <player:text?>",
+        ] {
+            assert!(usages.contains(&wanted), "{wanted}");
+        }
+    }
+
+    // ---- /ondeath while it is on -----------------------------------------------------------
+
+    #[test]
+    fn ondeath_says_death_cycling_decides_and_refuses_to_change() {
+        let mut r = rig();
+        assert_eq!(
+            said(r.say(OP, "ondeath")),
+            [
+                "Players who die are death cycled!",
+                "This option is currently being overridden by /cycledeath. Disable it to change this option"
+            ]
+        );
+        // Gray, with the accent on what matters.
+        assert_eq!(
+            colours(&r, 0),
+            [
+                ("Players who die are ".to_owned(), Some(rift_chat::GRAY)),
+                ("death cycled".to_owned(), Some(rift_chat::ACCENT)),
+                ("!".to_owned(), Some(rift_chat::GRAY)),
+            ]
+        );
+        assert_eq!(
+            colours(&r, 1),
+            [
+                (
+                    "This option is currently being overridden by ".to_owned(),
+                    Some(rift_chat::GRAY)
+                ),
+                ("/cycledeath".to_owned(), Some(rift_chat::ACCENT)),
+                (
+                    ". Disable it to change this option".to_owned(),
+                    Some(rift_chat::GRAY)
+                ),
+            ]
+        );
+        assert_eq!(
+            said(r.say(OP, "ondeath admin"))[0],
+            "Operators who die are death cycled!"
+        );
+        for line in ["ondeath kick", "ondeath admin none", "ondeath nonsense"] {
+            let lines = said(r.say(OP, line));
+            assert!(
+                reason(&lines).starts_with("Death cycling is on and overrides this option"),
+                "{line}: {lines:?}"
+            );
+        }
+        // It changed nothing: with cycling off again, the settings are the defaults.
+        said(r.say(OP, "cycledeath off"));
+        assert_eq!(said(r.say(OP, "ondeath")), ["Players who die are kicked"]);
+        assert_eq!(colours(&r, 0)[0].1, Some(rift_chat::GRAY));
+    }
+
+    #[test]
+    fn the_status_of_the_other_commands_is_gray_and_what_they_do_is_white() {
+        let mut r = rig();
+        said(r.say(OP, "cycledeath off"));
+        for line in ["ondeath", "ondeath admin", "deathmsg", "deathmsgradius"] {
+            said(r.say(OP, line));
+            assert_eq!(colours(&r, 0)[0].1, Some(rift_chat::GRAY), "{line}");
+        }
+        for line in [
+            "ondeath kick",
+            "deathmsg death",
+            "deathmsgradius 90",
+            "deathprotect on",
+        ] {
+            said(r.say(OP, line));
+            assert_eq!(colours(&r, 0)[0].1, Some(rift_chat::WHITE), "{line}");
+        }
+    }
+
+    // ---- what a death does -----------------------------------------------------------------
+
+    #[test]
+    fn the_inventory_follows_the_setting_and_the_experience_always_drops() {
+        let mut r = rig();
+        // The engine's start: dropped, not kept, experience dropped.
+        assert_eq!(r.loot(BOB), (false, true, true, false));
+        said(r.say(OP, "cycledeath inventory keep"));
+        assert_eq!(r.loot(BOB), (true, false, true, false));
+        said(r.say(OP, "cycledeath inventory both"));
+        assert_eq!(r.loot(BOB), (true, true, true, false));
+        said(r.say(OP, "cycledeath inventory drop"));
+        assert_eq!(r.loot(BOB), (false, true, true, false));
+    }
+
+    #[test]
+    fn an_exempt_player_and_a_world_with_cycling_off_are_left_as_the_engine_has_them() {
+        let mut r = rig();
+        said(r.say(OP, "cycledeath inventory keep"));
+        said(r.say(OP, "cycledeath exempt bob"));
+        assert_eq!(r.loot(BOB), (false, true, true, false));
+        assert_eq!(r.loot(ALICE), (true, false, true, false));
+        said(r.say(OP, "cycledeath off"));
+        assert_eq!(r.loot(ALICE), (false, true, true, false));
+    }
+
+    // ---- the respawn spot ------------------------------------------------------------------
+
+    #[test]
+    fn every_player_gets_a_spot_at_the_set_distance_while_they_live() {
+        let mut r = rig();
+        r.player_mut(BOB).position = [1000.0, 64.0, -2000.0];
+        r.tick();
+        r.tick();
+        // A chunk was asked for, for each player, by their own name.
+        let asked: Vec<&(String, [i32; 2])> = r.host.requests.keys().collect();
+        assert_eq!(asked.len(), 3, "{asked:?}");
+        let (_, chunk) = r
+            .host
+            .requests
+            .keys()
+            .find(|(who, _)| *who == owner(BOB))
+            .expect("Bob's chunk");
+        // 150 blocks from Bob: the chunk's corner is within a chunk of that ring.
+        let corner = [f64::from(chunk[0] * 16), 0.0, f64::from(chunk[1] * 16)];
+        let d = distance(corner, [1000.0, 0.0, -2000.0]);
+        assert!((d - 150.0).abs() <= 23.0, "{d}");
+    }
+
+    #[test]
+    fn a_death_respawns_the_player_at_the_spot_before_a_click_and_not_kicked() {
+        let mut r = rig();
+        r.player_mut(BOB).position = [500.0, 64.0, 500.0];
+        r.tick();
+        r.tick();
+        r.die(BOB, "Bob was slain");
+        // Not kicked, not made a spectator: the tick asks the engine to respawn them.
+        assert!(r.host.kicks.is_empty() && r.host.game_modes.is_empty());
+        r.tick();
+        assert_eq!(r.host.respawns, [BOB]);
+        let (dimension, at) = r.respawn(BOB, (NETHER, [0.0, 64.0, 0.0]));
+        assert_eq!(dimension, OVERWORLD);
+        // On the surface the world reports: the first free block above the ground (70), in a
+        // block's middle, 150 blocks (within the block it falls in) from where they died.
+        assert_eq!(at[1], 70.0);
+        assert_eq!((at[0].fract(), at[2].fract()), (0.5, 0.5));
+        let d = distance(at, [500.0, 0.0, 500.0]);
+        assert!((d - 150.0).abs() <= 1.5, "{d}");
+        // The chunk it held is let go, and they get a random nickname at the next tick.
+        assert!(
+            r.host.released.iter().any(|(who, _)| *who == owner(BOB)),
+            "{:?}",
+            r.host.released
+        );
+        r.tick();
+        assert_eq!(r.host.commands, ["nick random Bob"]);
+        r.tick();
+        assert_eq!(r.host.commands.len(), 1, "once");
+    }
+
+    #[test]
+    fn an_operator_is_cycled_too() {
+        let mut r = rig();
+        r.ticks(3);
+        r.die(OP, "Op died");
+        r.tick();
+        assert_eq!(r.host.respawns, [OP]);
+        assert!(r.host.kicks.is_empty() && r.host.game_modes.is_empty());
+        let (dimension, _) = r.respawn(OP, (OVERWORLD, [0.0, 64.0, 0.0]));
+        assert_eq!(dimension, OVERWORLD);
+        r.tick();
+        assert_eq!(r.host.commands, ["nick random Op"]);
+    }
+
+    #[test]
+    fn an_exempt_player_dies_by_the_ondeath_rules() {
+        let mut r = rig();
+        said(r.say(OP, "cycledeath exempt bob"));
+        r.ticks(3);
+        // No spot is kept for them.
+        assert!(!r.host.requests.keys().any(|(who, _)| *who == owner(BOB)));
+        r.die(BOB, "Bob died");
+        r.tick();
+        assert!(r.host.respawns.is_empty());
+        assert_eq!(r.host.kicks, [(BOB, "Bob died".to_owned())]);
+    }
+
+    #[test]
+    fn ondeath_is_used_again_when_cycling_is_off() {
+        let mut r = rig();
+        r.ticks(3);
+        said(r.say(OP, "cycledeath off"));
+        r.tick();
+        r.die(BOB, "Bob died");
+        assert_eq!(r.host.kicks, [(BOB, "Bob died".to_owned())]);
+        // The spots that were held are let go.
+        assert!(r.host.requests.is_empty(), "{:?}", r.host.requests);
+    }
+
+    #[test]
+    fn a_death_before_a_spot_is_ready_waits_for_it_without_a_kick() {
+        let mut r = rig();
+        r.host.chunk_delay = 5;
+        r.ticks(1);
+        r.die(BOB, "Bob died");
+        r.ticks(3);
+        assert!(r.host.respawns.is_empty(), "the chunk is not here yet");
+        assert!(r.host.kicks.is_empty());
+        r.ticks(4);
+        assert_eq!(r.host.respawns, [BOB]);
+        let (_, at) = r.respawn(BOB, (OVERWORLD, [0.0, 64.0, 0.0]));
+        assert_eq!(at[1], 70.0);
+    }
+
+    #[test]
+    fn a_spot_on_water_or_not_loaded_is_not_used() {
+        let mut r = rig();
+        // Even columns are lakes: only an odd column can be a spot.
+        r.host.ground = Box::new(|x, _| {
+            if x % 2 == 0 {
+                (63, "minecraft:water".to_owned())
+            } else {
+                (70, "minecraft:grass_block".to_owned())
+            }
+        });
+        r.ticks(80);
+        r.die(BOB, "Bob died");
+        r.tick();
+        let (_, at) = r.respawn(BOB, (OVERWORLD, [0.0, 64.0, 0.0]));
+        assert_eq!(at[1], 70.0);
+        assert_eq!((at[0] - 0.5).rem_euclid(2.0), 1.0, "{at:?}");
+        // The ones that were refused were let go, so nothing stays held.
+        assert!(r.host.requests.len() <= 3, "{:?}", r.host.requests);
+    }
+
+    #[test]
+    fn spots_that_keep_failing_are_tried_again_later() {
+        let mut r = Rig::new();
+        r.join("Op", OP, 4);
+        r.tick();
+        r.say(OP, "cycledeath on").unwrap();
+        r.host.ground = Box::new(|_, _| (63, "minecraft:water".to_owned()));
+        r.ticks(25);
+        // It tries at most ten times before resting, and holds nothing.
+        let held = r.host.requests.len();
+        assert_eq!(held, 0);
+        let asked = r.host.released.len();
+        assert!((10..=20).contains(&asked), "{asked}");
+        r.host.ground = Box::new(|_, _| (70, "minecraft:grass_block".to_owned()));
+        r.ticks(150);
+        r.die(OP, "Op died");
+        r.tick();
+        assert_eq!(r.host.respawns, [OP]);
+    }
+
+    #[test]
+    fn a_player_who_moves_far_is_given_a_spot_for_where_they_are_now() {
+        let mut r = rig();
+        r.player_mut(BOB).position = [0.0, 64.0, 0.0];
+        r.ticks(3);
+        let first = r
+            .host
+            .requests
+            .keys()
+            .find(|(who, _)| *who == owner(BOB))
+            .unwrap()
+            .1;
+        r.player_mut(BOB).position = [3000.0, 64.0, 3000.0];
+        r.ticks(3);
+        let second = r
+            .host
+            .requests
+            .keys()
+            .find(|(who, _)| *who == owner(BOB))
+            .unwrap()
+            .1;
+        assert_ne!(first, second);
+        assert!(second[0] > 100, "{second:?}");
+        assert!(
+            r.host
+                .released
+                .iter()
+                .any(|(who, chunk)| *who == owner(BOB) && *chunk == first),
+            "the old chunk is let go"
+        );
+        // A step is not far.
+        r.player_mut(BOB).position = [3005.0, 64.0, 3005.0];
+        let held = r.host.requests.clone();
+        r.ticks(3);
+        assert_eq!(r.host.requests, held);
+    }
+
+    #[test]
+    fn a_changed_setting_finds_the_spots_again() {
+        let mut r = rig();
+        r.ticks(3);
+        let before = r.host.requests.clone();
+        said(r.say(OP, "cycledeath distance 400"));
+        r.ticks(3);
+        assert_ne!(r.host.requests, before);
+        // They are at the new distance from where the players are (the origin, here).
+        let (_, chunk) = r
+            .host
+            .requests
+            .keys()
+            .find(|(who, _)| *who == owner(BOB))
+            .unwrap();
+        let d = distance(
+            [f64::from(chunk[0] * 16), 0.0, f64::from(chunk[1] * 16)],
+            [0.0; 3],
+        );
+        assert!((d - 400.0).abs() <= 23.0, "{d}");
+    }
+
+    #[test]
+    fn the_spawn_point_mode_keeps_to_the_distance_from_the_spawn_point() {
+        let mut r = rig();
+        said(r.say(OP, "cycledeath mode spawnpoint"));
+        said(r.say(OP, "cycledeath setspawn 1000 70 -500"));
+        said(r.say(OP, "cycledeath distance 60"));
+        for _ in 0..30 {
+            r.host.requests.clear();
+            r.ticks(2);
+            for (_, chunk) in r.host.requests.keys() {
+                let corner = [f64::from(chunk[0] * 16), 0.0, f64::from(chunk[1] * 16)];
+                let d = distance(corner, [1000.0, 0.0, -500.0]);
+                assert!(d <= 60.0 + 23.0, "{chunk:?} is {d} from the spawn point");
+            }
+        }
+    }
+
+    #[test]
+    fn the_spawn_point_defaults_to_the_world_spawn() {
+        let mut r = rig();
+        r.host.world_spawn = Some([-3000, 64, 4000]);
+        said(r.say(OP, "cycledeath mode spawnpoint"));
+        said(r.say(OP, "cycledeath distance 20"));
+        r.host.requests.clear();
+        r.ticks(2);
+        for (_, chunk) in r.host.requests.keys() {
+            assert!(
+                (chunk[0] * 16 + 3000).abs() <= 40 && (chunk[1] * 16 - 4000).abs() <= 40,
+                "{chunk:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_distance_of_zero_is_the_spot_itself() {
+        let mut r = rig();
+        said(r.say(OP, "cycledeath distance 0"));
+        r.player_mut(BOB).position = [37.6, 64.0, -90.2];
+        r.ticks(3);
+        r.die(BOB, "Bob died");
+        r.tick();
+        let (_, at) = r.respawn(BOB, (OVERWORLD, [0.0, 64.0, 0.0]));
+        assert_eq!((at[0], at[2]), (37.5, -90.5));
+    }
+
+    #[test]
+    fn the_engine_is_asked_again_for_a_player_who_has_not_respawned() {
+        let mut r = rig();
+        r.ticks(3);
+        r.die(BOB, "Bob died");
+        r.ticks(2);
+        assert_eq!(r.host.respawns, [BOB]);
+        r.ticks(50);
+        assert_eq!(r.host.respawns, [BOB], "not asked again at once");
+        r.ticks(60);
+        assert_eq!(r.host.respawns, [BOB, BOB]);
+    }
+
+    #[test]
+    fn a_player_who_leaves_lets_go_of_what_they_held() {
+        let mut r = rig();
+        r.ticks(3);
+        assert!(r.host.requests.keys().any(|(who, _)| *who == owner(BOB)));
+        r.leave(BOB);
+        assert!(!r.host.requests.keys().any(|(who, _)| *who == owner(BOB)));
+        // A player who died and left is not respawned.
+        r.die(ALICE, "Alice died");
+        r.leave(ALICE);
+        r.ticks(3);
+        assert!(r.host.respawns.is_empty());
+        assert!(r.host.commands.is_empty());
+    }
+
+    #[test]
+    fn a_bot_is_not_cycled() {
+        let mut r = rig();
+        r.join("Bot", 0xb07, 0);
+        r.player_mut(0xb07).fake = true;
+        r.ticks(3);
+        assert!(!r.host.requests.keys().any(|(who, _)| *who == owner(0xb07)));
+        r.die(0xb07, "Bot died");
+        r.tick();
+        assert!(r.host.respawns.is_empty());
+    }
+
+    // ---- what is kept ----------------------------------------------------------------------
+
+    #[test]
+    fn the_settings_are_saved_and_exemptions_are_not() {
+        let mut r = rig();
+        said(r.say(OP, "cycledeath mode spawnpoint"));
+        said(r.say(OP, "cycledeath setspawn 5 70 -9"));
+        said(r.say(OP, "cycledeath inventory both"));
+        said(r.say(OP, "cycledeath distance 321"));
+        said(r.say(OP, "cycledeath exempt bob"));
+        let file = r.file().expect("saved");
+        assert!(
+            file.contains("[cycle]") && file.contains("distance = 321"),
+            "{file}"
+        );
+
+        let mut r = r.restart();
+        r.join("Op", OP, 4);
+        r.join("Bob", BOB, 0);
+        r.tick();
+        assert_eq!(
+            said(r.say(OP, "cycledeath")),
+            [
+                "Death cycling is on",
+                "Mode: spawnpoint, within 321 blocks of 5, 70, -9",
+                "Inventory: both, and up to 100 points of experience always drop",
+                "Exempt: nobody"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_saved_distance_out_of_range_is_held_to_it() {
+        let mut r = Rig::new();
+        r.write_file("[cycle]\nenabled = true\ndistance = 99999999\n");
+        r.join("Op", OP, 4);
+        r.tick();
+        assert_eq!(
+            said(r.say(OP, "cycledeath"))[1],
+            "Mode: deathpoint, 100000 blocks from where they died"
+        );
+    }
+
+    #[test]
+    fn nothing_is_asked_of_the_world_while_it_is_off() {
+        let mut r = Rig::new();
+        r.join("Op", OP, 4);
+        r.ticks(5);
+        assert!(r.host.requests.is_empty() && r.host.released.is_empty());
     }
 }

@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod command;
+mod cycle;
 mod rng;
 mod state;
 mod store;
@@ -21,12 +22,12 @@ mod testing;
 use command::Actor;
 use horizon_client::mod_api::{
     Flow, Hooks, Host, LevelTickPostEvent, LivingDamagePreV2Event, PerformCommandEvent,
-    PerformConsoleCommandEvent, PlayerDeathMessageEvent, PlayerDiedV2Event, PlayerLoggedOutEvent,
-    PlayerRespawnPositionEvent, PlayerRespawnedEvent, RegisterCommandsEvent, TabCompleteV2Event,
-    Text,
+    PerformConsoleCommandEvent, PlayerDeathLootEvent, PlayerDeathMessageEvent, PlayerDiedV2Event,
+    PlayerLoggedOutEvent, PlayerRespawnPositionEvent, PlayerRespawnedEvent, RegisterCommandsEvent,
+    TabCompleteV2Event, Text,
 };
 use rng::Rng;
-use state::{DeathMsg, OnDeath, Spot, State};
+use state::{CycleInventory, DeathMsg, OnDeath, Spot, State};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
@@ -135,6 +136,13 @@ impl Hardcore {
     }
 }
 
+/// Whether a death of `uuid` is cycled: death cycling is on and they are not exempt.
+fn cycles(state: &State, uuid: u128) -> bool {
+    state.cycle.enabled
+        && !state.exempt.contains(&uuid)
+        && !state.member(uuid).is_some_and(|p| p.fake)
+}
+
 /// What a hit of `amount` may take off a player with `health`, held above `level` health points.
 fn protected(amount: f32, health: f32, level: u8) -> f32 {
     let room = (health - f32::from(level)).max(0.0);
@@ -179,12 +187,15 @@ impl Hooks for Hardcore {
     }
 
     /// Each tick of each level: who is on the server, for the hooks that cannot see them, and the
-    /// join and leave lines the engine has been told.
-    fn level_tick_post(&self, host: &mut dyn Host, _event: &mut LevelTickPostEvent<'_>) {
+    /// join and leave lines the engine has been told. Each tick of the overworld, death cycling.
+    fn level_tick_post(&self, host: &mut dyn Host, event: &mut LevelTickPostEvent<'_>) {
         self.ensure_loaded(&*host);
         let players = host.server_players();
-        self.state().roster = players;
+        self.state().roster = players.clone();
         self.apply_lines(host);
+        if event.dimension == cycle::OVERWORLD {
+            self.cycle_tick(host, &players);
+        }
     }
 
     /// A hit on a player with protection that is on takes no more off their health than leaves
@@ -207,11 +218,35 @@ impl Hooks for Hardcore {
         event.amount = protected(event.amount, event.health, level);
     }
 
-    /// A player dies: they are kicked with their death message, or marked to spectate once they
-    /// respawn, or left alone, as `/ondeath` says for players or for operators.
+    /// What a death does to the inventory and the experience of a player who is death cycled: the
+    /// inventory as `/cycledeath inventory` says, and the experience always dropped (up to 100
+    /// points) and not kept.
+    fn player_death_loot(&self, _host: &mut dyn Host, event: &mut PlayerDeathLootEvent<'_>) {
+        let state = self.state();
+        if !cycles(&state, event.player) {
+            return;
+        }
+        let (keep, drop) = match state.cycle.inventory {
+            CycleInventory::Drop => (false, true),
+            CycleInventory::Keep => (true, false),
+            CycleInventory::Both => (true, true),
+        };
+        event.keep_inventory = keep;
+        event.drop_inventory = drop;
+        event.drop_experience = true;
+        event.keep_experience = false;
+    }
+
+    /// A player dies: a death cycled player waits for their respawn spot and is respawned there
+    /// by the tick. Otherwise they are kicked with their death message, or marked to spectate once
+    /// they respawn, or left alone, as `/ondeath` says for players or for operators.
     fn player_died_v2(&self, host: &mut dyn Host, event: &mut PlayerDiedV2Event<'_>) {
         let (mode, spot) = {
-            let state = self.state();
+            let mut state = self.state();
+            if cycles(&state, event.player) {
+                state.waiting.insert(event.player);
+                return;
+            }
             let member = state.member(event.player);
             if member.is_some_and(|p| p.fake) {
                 return;
@@ -264,13 +299,21 @@ impl Hooks for Hardcore {
         *event.radius = (state.radius >= 0).then(|| f64::from(state.radius));
     }
 
-    /// A player who is to spectate respawns where they died.
+    /// A death cycled player respawns at their spot, facing any way; a player who is to spectate
+    /// respawns where they died.
     fn player_respawn_position(
         &self,
         _host: &mut dyn Host,
         event: &mut PlayerRespawnPositionEvent<'_>,
     ) {
-        let state = self.state();
+        let mut state = self.state();
+        if let Some(going) = state.going.get(&event.player) {
+            *event.dimension = cycle::OVERWORLD.to_owned();
+            *event.pos = going.pos;
+            event.yaw = (state.rng.unit() * 360.0) as f32 - 180.0;
+            event.pitch = 0.0;
+            return;
+        }
         let Some(spot) = state.spectate.get(&event.player) else {
             return;
         };
@@ -281,14 +324,41 @@ impl Hooks for Hardcore {
         *event.pos = spot.position;
     }
 
+    /// A death cycled player is back: their spot's chunk is let go (they hold it now) and they are
+    /// given a random nickname at the next tick. A player who is to spectate becomes one.
     fn player_respawned(&self, host: &mut dyn Host, event: &mut PlayerRespawnedEvent<'_>) {
-        let spectate = self.state().spectate.remove(&event.player).is_some();
+        let (going, spectate) = {
+            let mut state = self.state();
+            let going = state.going.remove(&event.player);
+            if going.is_some() {
+                state.rename.push((event.player, event.name.to_owned()));
+            }
+            (going, state.spectate.remove(&event.player).is_some())
+        };
+        if let Some(going) = going {
+            host.chunk_load_release(&cycle::owner(event.player), cycle::OVERWORLD, going.chunk);
+        }
         if spectate {
             host.set_game_mode(event.player, 3);
         }
     }
 
-    fn player_logged_out(&self, _host: &mut dyn Host, event: &mut PlayerLoggedOutEvent<'_>) {
-        self.state().spectate.remove(&event.player);
+    fn player_logged_out(&self, host: &mut dyn Host, event: &mut PlayerLoggedOutEvent<'_>) {
+        let held: Vec<[i32; 2]> = {
+            let mut state = self.state();
+            state.spectate.remove(&event.player);
+            state.waiting.remove(&event.player);
+            state.rename.retain(|(uuid, _)| *uuid != event.player);
+            let mut held: Vec<[i32; 2]> = Vec::new();
+            if let Some(standby) = state.standby.remove(&event.player) {
+                held.extend(standby.ready.iter().map(|r| r.chunk));
+                held.extend(standby.loading.iter().map(|l| l.chunk));
+            }
+            held.extend(state.going.remove(&event.player).map(|g| g.chunk));
+            held
+        };
+        for chunk in held {
+            host.chunk_load_release(&cycle::owner(event.player), cycle::OVERWORLD, chunk);
+        }
     }
 }

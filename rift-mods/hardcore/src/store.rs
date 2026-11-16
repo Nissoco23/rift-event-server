@@ -1,7 +1,7 @@
 //! `config/hardcore.toml`: what the mod keeps across a restart, written by the mod itself each
 //! time a command changes it.
 
-use crate::state::{DEFAULT_RADIUS, DeathMsg};
+use crate::state::{Cycle, DEFAULT_RADIUS, DeathMsg};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -15,6 +15,8 @@ pub struct Saved {
     pub deathmsgradius: i32,
     /// Each player's protection, by UUID.
     pub protection: BTreeMap<String, SavedProtection>,
+    /// Death cycling (`/cycledeath`).
+    pub cycle: Cycle,
 }
 
 impl Default for Saved {
@@ -23,6 +25,7 @@ impl Default for Saved {
             deathmsg: DeathMsg::Leave,
             deathmsgradius: DEFAULT_RADIUS,
             protection: BTreeMap::new(),
+            cycle: Cycle::default(),
         }
     }
 }
