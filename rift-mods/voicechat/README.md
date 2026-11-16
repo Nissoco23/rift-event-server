@@ -13,9 +13,13 @@ relays opus frames.
 
 1. Open the **UDP port 24454** (`port` in `config/voicechat.toml`) in the machine's firewall, and on a panel allocate it
    to the server (Pterodactyl: the egg's **Voice chat port** variable).
-2. **Behind a proxy (Velocity)**, set `voice-host` to this server's own public address, as `host` or `host:port`
-   (Pterodactyl: **Voice chat host**). Empty means the players' clients send their voice to the address they play on,
-   which is the proxy's, and no voice chat server runs there.
+2. **Behind a Velocity proxy that runs the Simple Voice Chat plugin**, leave `voice-host` empty. The plugin reads the
+   secret this server sends, tells the players' clients to send their voice to the proxy (its own `port` and
+   `voice_host`, in its config) and passes it on to this server's UDP port at the address Velocity knows this server
+   by. So this server's voice port only has to be open to the proxy, and the one players need is the proxy's.
+   **Behind a proxy without the plugin**, set `voice-host` to this server's own public address, as `host` or
+   `host:port` (Pterodactyl: **Voice chat host**): empty means the clients send their voice to the address they
+   play on, which is the proxy's, where nothing listens.
 3. Players install Simple Voice Chat 2.6 and join. The log says `Voice chat server started at ...` at the first tick;
    `/voicechat status` says who has the mod and is connected.
 

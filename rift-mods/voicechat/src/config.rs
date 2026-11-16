@@ -123,8 +123,10 @@ port = 24454
 # The address to bind to. Leave empty for every address.
 bind-address = ""
 
-# The address players send their voice to. Empty means the address they play on, which behind a proxy
-# (Velocity) is the proxy's, not this server's. Set it to this server's public address, as `host`
+# The address players send their voice to. Empty means the address they play on. Behind a Velocity
+# proxy that runs the Simple Voice Chat plugin, leave it empty: the plugin tells the players where to
+# send their voice and passes it on to this server's UDP port above, which only has to be reachable
+# from the proxy. Behind a proxy without the plugin, set it to this server's public address, as `host`
 # (the port above is used), `host:port`, or just a port (the address they play on, another port).
 voice-host = ""
 

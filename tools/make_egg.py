@@ -126,9 +126,10 @@ def egg():
             variable(
                 "Voice chat host",
                 "VOICECHAT_HOST",
-                "The public address players send their voice to: the server's own address, not a proxy's "
-                "(for example voice.example.com or voice.example.com:24454). Empty means the address "
-                "players play on. Written to config/voicechat.toml at each start.",
+                "Leave empty behind a Velocity proxy that runs the Simple Voice Chat plugin (it bridges the "
+                "voice to this server's voice port). Otherwise the server's own public address, for example "
+                "voice.example.com or voice.example.com:24454; empty means the address players play on. "
+                "Written to config/voicechat.toml at each start.",
                 "",
                 "nullable|string|max:255",
             ),

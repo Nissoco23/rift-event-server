@@ -134,7 +134,7 @@ impl VoiceChat {
                 if config.voice_host.trim().is_empty() {
                     host.log(
                         "INFO",
-                        "Voice chat: voice-host is empty, so players send their voice to the address they play on; behind a proxy set it in config/voicechat.toml",
+                        "Voice chat: voice-host is empty: players send their voice to the address they play on, which is right alone or behind a proxy that runs the Simple Voice Chat plugin; behind one that does not, set it in config/voicechat.toml",
                     );
                 }
                 *self.running.lock().unwrap_or_else(|e| e.into_inner()) = Some(running);

@@ -567,14 +567,19 @@ Players who have the [Simple Voice Chat](https://modrinth.com/plugin/simple-voic
 client can talk to the players near them, and in groups. Nothing else changes: players without the mod play as before.
 The server runs the `voicechat` mod of `rift-mods/` ([README](../rift-mods/voicechat/README.md)), on by default.
 
-It needs one more port than the game: **UDP 24454**, which the voice goes over. Open it (UDP) in the machine's firewall.
+It needs one more port than the game: **UDP 24454**, which the voice goes over. Open it (UDP) in the machine's firewall
+(behind a proxy with the plugin, to the proxy only: see `voice-host` below).
 `config/voicechat.toml` (written on the first start) has the rest:
 
 - `port`: the UDP port. Panels (Pterodactyl): allocate one more port to the server and put it in the egg's
   **Voice chat port** variable.
-- `voice-host`: the address the players' clients send their voice to. Empty means the address they play on, which
-  **behind a proxy (Velocity) is the proxy's**, where no voice chat server runs: set it to this server's own public
-  address, as `host` (the port above is used) or `host:port`. On Pterodactyl, the **Voice chat host** variable.
+- `voice-host`: the address the players' clients send their voice to. Empty means the address they play on.
+  **Behind a Velocity proxy that runs the Simple Voice Chat plugin, leave it empty**: the plugin sniffs the secret
+  this server sends, points the clients at the proxy (its own `port` and `voice_host`) and bridges their voice to this
+  server's UDP `port`, at the address Velocity knows the server by, so only the proxy's voice port has to be open to
+  players and this one to the proxy. Behind a proxy without the plugin the clients would send their voice to the proxy,
+  where nothing listens: set it to this server's own public address, as `host` or `host:port`. On Pterodactyl, the
+  **Voice chat host** variable.
 - `max-voice-distance`, `whisper-distance`, `groups`, `spectators-talk-to-players` and the rest: see the file.
 
 `/voicechat status` (operators, the console) says whether it runs and who is connected. The log says `Voice chat server
