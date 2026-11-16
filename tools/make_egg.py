@@ -115,6 +115,23 @@ def egg():
                 "",
                 "nullable|string|max:64",
             ),
+            variable(
+                "Voice chat port",
+                "VOICECHAT_PORT",
+                "The UDP port for voice chat (Simple Voice Chat): allocate it to the server in the panel and "
+                "open it (UDP) to players. Written to config/voicechat.toml at each start.",
+                "24454",
+                "required|numeric|between:1,65535",
+            ),
+            variable(
+                "Voice chat host",
+                "VOICECHAT_HOST",
+                "The public address players send their voice to: the server's own address, not a proxy's "
+                "(for example voice.example.com or voice.example.com:24454). Empty means the address "
+                "players play on. Written to config/voicechat.toml at each start.",
+                "",
+                "nullable|string|max:255",
+            ),
         ],
     }
 

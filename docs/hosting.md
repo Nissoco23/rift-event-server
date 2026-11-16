@@ -561,6 +561,26 @@ settings are read when the server starts. To turn it off again, set `enable-quer
 Where it differs from vanilla: while the game isn't running (starting, restarting) nothing answers, and who is
 online is read from the game at most once a second.
 
+## Voice chat
+
+Players who have the [Simple Voice Chat](https://modrinth.com/plugin/simple-voice-chat) mod (version **2.6**) on their
+client can talk to the players near them, and in groups. Nothing else changes: players without the mod play as before.
+The server runs the `voicechat` mod of `rift-mods/` ([README](../rift-mods/voicechat/README.md)), on by default.
+
+It needs one more port than the game: **UDP 24454**, which the voice goes over. Open it (UDP) in the machine's firewall.
+`config/voicechat.toml` (written on the first start) has the rest:
+
+- `port`: the UDP port. Panels (Pterodactyl): allocate one more port to the server and put it in the egg's
+  **Voice chat port** variable.
+- `voice-host`: the address the players' clients send their voice to. Empty means the address they play on, which
+  **behind a proxy (Velocity) is the proxy's**, where no voice chat server runs: set it to this server's own public
+  address, as `host` (the port above is used) or `host:port`. On Pterodactyl, the **Voice chat host** variable.
+- `max-voice-distance`, `whisper-distance`, `groups`, `spectators-talk-to-players` and the rest: see the file.
+
+`/voicechat status` (operators, the console) says whether it runs and who is connected. The log says `Voice chat server
+started at ...` at the first tick, or why not (a port that is taken). A player whose Simple Voice Chat is another
+version is told in chat to install 2.6.
+
 ## 7. Backups
 
 ```sh

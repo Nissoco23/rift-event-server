@@ -107,6 +107,26 @@
       "user_editable": true,
       "rules": "nullable|string|max:64",
       "field_type": "text"
+    },
+    {
+      "name": "Voice chat port",
+      "description": "The UDP port for voice chat (Simple Voice Chat): allocate it to the server in the panel and open it (UDP) to players. Written to config/voicechat.toml at each start.",
+      "env_variable": "VOICECHAT_PORT",
+      "default_value": "24454",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "required|numeric|between:1,65535",
+      "field_type": "text"
+    },
+    {
+      "name": "Voice chat host",
+      "description": "The public address players send their voice to: the server's own address, not a proxy's (for example voice.example.com or voice.example.com:24454). Empty means the address players play on. Written to config/voicechat.toml at each start.",
+      "env_variable": "VOICECHAT_HOST",
+      "default_value": "",
+      "user_viewable": true,
+      "user_editable": true,
+      "rules": "nullable|string|max:255",
+      "field_type": "text"
     }
   ]
 }

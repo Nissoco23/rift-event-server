@@ -23,7 +23,8 @@ class RiftEgg(unittest.TestCase):
         # init reads these (crates/horizon-server/src/init.rs); the install script reads RIFT_VERSION.
         self.assertTrue(
             {"HORIZON_EULA", "HORIZON_ONLINE", "HORIZON_WHITELIST", "HORIZON_PLAYERS",
-             "HORIZON_OP", "HORIZON_WORLD", "HORIZON_SEED", "RIFT_VERSION"} <= names
+             "HORIZON_OP", "HORIZON_WORLD", "HORIZON_SEED", "RIFT_VERSION",
+             "VOICECHAT_PORT", "VOICECHAT_HOST"} <= names
         )
         # The panel rejects an egg whose author is not an email address (the import fails with a 500).
         self.assertRegex(egg["author"], r"^[^@\s]+@[^@\s]+\.[a-z]+$")
