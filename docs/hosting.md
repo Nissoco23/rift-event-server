@@ -7,9 +7,10 @@ plan are in [server.md](server.md).
 
 > **Rift Event Server.** This guide was written for Horizon's releases. Here, read `horizon-server` as
 > `rift-server`, `horizon-prepare` as `rift-prepare` and `horizon-engine` as `rift-engine`
-> ([rift-naming.md](rift-naming.md)). This fork has no release archives, install scripts, hosting-panel eggs or
-> update channel: skip "1. Install", the `update` and `rollback` commands and "Hosting panels", build with
-> `scripts/build.sh` as [the README](../README.md) says, and treat "Docker" as not adapted yet. What the guide
+> ([rift-naming.md](rift-naming.md)). This fork has no release archives, install scripts or update channel: skip
+> "1. Install" and the `update` and `rollback` commands, build with `scripts/build.sh` as
+> [the README](../README.md) says, and treat "Docker" as not adapted yet. For a hosting panel use
+> [Rift on Pterodactyl](#rift-on-pterodactyl) below, not the Horizon egg. What the guide
 > says about `server.toml`, the commands, the panel, the API, backups and Velocity applies as written.
 
 ## Before you start
@@ -637,7 +638,31 @@ The service runs `horizon-server run` through the installed `current` release, s
 next restart. `service print` shows what it would install, `service uninstall` removes it and leaves the server
 folder alone.
 
-## Hosting panels (Pterodactyl, AMP)
+## Rift on Pterodactyl
+
+Linux x86-64 only. Three parts, all in `packaging/rift/` and `.github/workflows/linux-build.yml`:
+
+1. **The build.** The *Linux build* workflow compiles `rift-server` and `rift-engine` (release profile) on every
+   push to `dev` and publishes them as the `nightly` pre-release (`rift-server-linux-x86_64.tar.gz` and its
+   `.sha256`); pushing a tag `v*` publishes a release of that name. The build holds nothing of Mojang's.
+2. **The egg.** In the panel: Nests, Import Egg, `packaging/rift/pterodactyl-egg.json`. It uses the image
+   `ghcr.io/ptero-eggs/yolks:debian`. Its install script downloads the release named by the *Rift release*
+   variable (`nightly` or a tag), checks it against the published SHA-256 and unpacks `start.sh` and `rift/`
+   into the server folder: it touches no world, settings or game files, so a reinstall is how you update.
+   `start.sh` writes `server.toml` on the first start from the egg's variables (EULA, online mode, whitelist,
+   players, operator, world, seed); the port always follows the panel's allocation. Afterwards edit `server.toml`.
+   The panel's Stop sends `stop`, which saves the world first.
+   The egg is generated from `packaging/rift/install.sh` by `tools/make_egg.py` (`--check` tells whether it is
+   up to date).
+3. **What you upload by hand.**
+   - The prepared game files (step 2), from your own Minecraft 26.3: into `resources/` in the server's files.
+   - Behind a Velocity proxy: set *Online mode* to `false` before the first start and put the proxy's
+     `forwarding.secret` in the server folder ([Behind a Velocity proxy](#behind-a-velocity-proxy)).
+   - To keep your settings and world: `world/` and `config/` (the mods' settings, the nick pool) from `dist/`.
+
+Set the EULA variable to `true` before the first start: until then the server stops and says why.
+
+## Hosting panels (Pterodactyl, AMP): Horizon's egg
 
 The egg installs the server build of the current Nightly (nothing of Mojang's) and runs `horizon-server`
 through `packaging/server/panel-start.sh`: the first start writes `server.toml` from the panel's settings, and the

@@ -1,0 +1,60 @@
+# Builds the Linux x86-64 server (rift-server and rift-engine, release profile) and publishes it for the
+# Pterodactyl egg (packaging/rift/) as a GitHub release:
+#   - every push to dev replaces the "nightly" pre-release;
+#   - a pushed tag v* makes a release of that name.
+# The build holds nothing of Mojang's: the prepared game files are uploaded to the server by hand.
+name: Linux build
+
+on:
+  push:
+    branches: [dev]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: linux-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # Ubuntu 22.04 links glibc 2.35, so the programs run on the egg's Debian 12 image (glibc 2.36).
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --locked -p rift-engine -p horizon-server --bin horizon-server
+
+      - name: Package
+        run: |
+          set -eu
+          mkdir -p pkg/rift
+          cp target/release/horizon-server pkg/rift/rift-server
+          cp target/release/rift-engine pkg/rift/rift-engine
+          cp packaging/rift/start.sh pkg/start.sh
+          chmod +x pkg/start.sh pkg/rift/rift-server pkg/rift/rift-engine
+          tar -czf rift-server-linux-x86_64.tar.gz -C pkg start.sh rift
+          sha256sum rift-server-linux-x86_64.tar.gz > rift-server-linux-x86_64.tar.gz.sha256
+          cat rift-server-linux-x86_64.tar.gz.sha256
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            gh release create "$GITHUB_REF_NAME" rift-server-linux-x86_64.tar.gz rift-server-linux-x86_64.tar.gz.sha256 \
+              --title "$GITHUB_REF_NAME" --notes "Linux x86-64 build of $GITHUB_REF_NAME ($GITHUB_SHA)."
+          else
+            gh release delete nightly --cleanup-tag --yes || true
+            gh release create nightly rift-server-linux-x86_64.tar.gz rift-server-linux-x86_64.tar.gz.sha256 \
+              --target "$GITHUB_SHA" --prerelease --title "Nightly" \
+              --notes "Linux x86-64 build of ${GITHUB_SHA} (${GITHUB_REF_NAME})."
+          fi
