@@ -52,6 +52,7 @@ members = [
     "rift-mods/viewdistance",
     "rift-mods/essentials",
     "rift-mods/throwingdiscs",
+    "rift-mods/hardcore",
     "xtask",
 ]
 resolver = "2"

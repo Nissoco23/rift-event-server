@@ -1285,6 +1285,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hardcore"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3714,6 +3724,7 @@ name = "rift-engine"
 version = "0.1.0"
 dependencies = [
  "essentials",
+ "hardcore",
  "horizon-client",
  "horizon-threads",
  "nick",

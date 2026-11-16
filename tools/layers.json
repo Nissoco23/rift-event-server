@@ -48,6 +48,7 @@
     "viewdistance": "platform",
     "essentials": "platform",
     "throwingdiscs": "platform",
+    "hardcore": "platform",
 
     "horizon-addresses": "horizon",
     "horizon-bench": "horizon",

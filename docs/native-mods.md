@@ -527,6 +527,27 @@ canceled by `native_living_incoming_damage`, or within the cooldown and no stron
 wolf's armour takes the hit. Like `native_living_incoming_damage`, they have no `self` and run on the server thread.
 API @API:living_damage@.
 
+`native_living_damage_pre_v2(entity, victim_uuid, kind, damage_type, causing, direct, health, totem_ready, amount)`
+is `native_living_damage_pre` for a player, right after it, with what a mod needs to hold a player's health above a
+floor: their UUID (none until they act on the server), the `health` they have before the hit comes off, and
+`totem_ready`, whether either hand holds a death-protection item, which a hit that would kill them uses up
+(`checkTotemDeathProtection`). `amount` is what is about to come off after armour, enchantments, effects and
+absorption, so `amount.min(health - floor)` is exact. A mob's hit is not told. API @API:living_damage_pre_v2@.
+
+### What a death tells the others
+
+`native_player_death_message(player, name, line, radius)` is asked when a server player dies and death messages are
+shown (`showDeathMessages`), before the line goes out (`ServerPlayer.die`'s `broadcastSystemMessage`). `line` starts
+as the death message: replace it, or set it to `None` to tell nobody. `radius` starts as `None` (everyone the team
+lets see it, as in vanilla); set a distance in blocks to keep the line to players in the dying player's dimension
+within it, the dying player included. The dying player's own death screen and the log keep the death message.
+`native_set_membership_lines(show)` turns the "joined the game" and "left the game" lines off or on for everyone (the
+player list entry and the entity still come and go, and the log still says it): on at start, as in vanilla, and it
+lasts until the server stops. It returns false off a server and inside a guest's packet hook, where the hub is taken
+out: call it from a tick hook and try again at the next if it was refused. The hardcore mod
+([README](../rift-mods/hardcore/README.md)) is built on these. API @API:player_death_message@ and
+@API:membership_lines@.
+
 ### The build's warnings
 
 Before it builds, the launcher reads the mods' `[[injection]]` lists and says three things in `native/build.log` that

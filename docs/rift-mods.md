@@ -66,5 +66,7 @@ markup.
   of names for random ones.
 - [ThrowingDiscs](../rift-mods/throwingdiscs/README.md): the throwing disc weapon in five tiers, thrown with a
   right-click, with its recipes, enchanting and `/discs`.
+- [Hardcore](../rift-mods/hardcore/README.md): death protection, what happens to a player who dies, and what the others
+  are told of it, for the event server's hardcore lore.
 - [Essentials](../rift-mods/essentials/README.md): `/gmc`, `/gms`, `/gmsp`, `/gma` for the game mode and
   `/flyspeed` for the flying speed, for operators.
