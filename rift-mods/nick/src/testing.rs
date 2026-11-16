@@ -1122,6 +1122,117 @@ mod tests {
         assert_eq!(rig.host.textures[&BOB], skin_of("Rex"));
     }
 
+    /// The pool account whose skin a player wears.
+    fn skin_account(rig: &Rig, uuid: u128, pool: &[&str]) -> Option<String> {
+        pool.iter()
+            .find(|n| rig.host.textures[&uuid] == skin_of(n))
+            .map(|n| (*n).to_owned())
+    }
+
+    #[test]
+    fn a_random_nickname_wears_the_skin_of_another_account_of_the_pool() {
+        let pool = ["Rex", "Zed", "Max", "Ada"];
+        let mut rig = Rig::new("", "Rex\nZed\nMax\nAda\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        let mut worn = std::collections::HashSet::new();
+        for _ in 0..24 {
+            rig.run(ALICE, "nick random Bob");
+            let nickname = rig.nickname(BOB).unwrap();
+            let account = skin_account(&rig, BOB, &pool).expect("a skin of the pool");
+            assert_ne!(account, nickname, "the skin must not match the name");
+            worn.insert(account);
+            rig.run(ALICE, "nick off Bob");
+            assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+        }
+        // Not always the same skin.
+        assert!(worn.len() >= 3, "{worn:?}");
+    }
+
+    #[test]
+    fn the_skin_of_a_random_nickname_is_told_in_nick_info() {
+        let pool = ["Rex", "Zed", "Max", "Ada"];
+        let mut rig = Rig::new("", "Rex\nZed\nMax\nAda\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        rig.run(ALICE, "nick random Bob");
+        let nickname = rig.nickname(BOB).unwrap();
+        let account = skin_account(&rig, BOB, &pool).unwrap();
+        let lines = rig.answer(ALICE, &format!("nick info {nickname}"));
+        assert!(
+            lines.iter().any(|l| l.contains(&account)),
+            "{lines:?} should name the skin's account {account}"
+        );
+    }
+
+    #[test]
+    fn a_pool_of_one_name_gives_that_names_own_skin() {
+        let mut rig = Rig::new("", "Rex\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        rig.run(ALICE, "nick random Bob");
+        assert_eq!(rig.nickname(BOB).as_deref(), Some("Rex"));
+        assert_eq!(rig.host.textures[&BOB], skin_of("Rex"));
+    }
+
+    #[test]
+    fn a_skin_from_a_name_that_is_no_account_is_skipped_for_another() {
+        // Ghost is no account: it can never be a skin, whichever name is drawn.
+        let pool = ["Rex", "Zed", "Max"];
+        let mut rig = Rig::new("", "Rex\nGhost\nZed\nMax\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        for _ in 0..12 {
+            rig.run(ALICE, "nick random Bob");
+            let nickname = rig.nickname(BOB).expect("a nickname");
+            let account = skin_account(&rig, BOB, &pool).expect("a real account's skin");
+            assert_ne!(account, nickname);
+            assert_ne!(nickname, "Ghost");
+            rig.run(ALICE, "nick off Bob");
+        }
+    }
+
+    #[test]
+    fn when_the_services_cannot_give_another_skin_the_names_own_stays() {
+        let mut rig = Rig::new("", "Rex\nZed\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        // Rex's skin is kept from an earlier use; Zed's is not, and the services go down.
+        rig.run(ALICE, "nick Bob Rex");
+        rig.run(ALICE, "nick off Bob");
+        rig.lookup.down.store(true, Ordering::SeqCst);
+        rig.run(ALICE, "nick random Bob");
+        assert_eq!(rig.nickname(BOB).as_deref(), Some("Rex"));
+        assert_eq!(rig.host.textures[&BOB], skin_of("Rex"));
+    }
+
+    #[test]
+    fn several_players_each_get_a_name_and_a_skin_that_is_not_theirs() {
+        let pool = ["Rex", "Zed", "Max", "Ada"];
+        let mut rig = Rig::new("", "Rex\nZed\nMax\nAda\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        rig.join("Eve", EVE, 0);
+        let lines = rig.run(ALICE, "nick random @a");
+        assert!(lines.iter().any(|l| l.contains("2 players")), "{lines:?}");
+        for uuid in [BOB, EVE] {
+            let nickname = rig.nickname(uuid).expect("a nickname");
+            assert_ne!(skin_account(&rig, uuid, &pool).unwrap(), nickname);
+        }
+        assert_ne!(rig.nickname(BOB), rig.nickname(EVE));
+    }
+
+    #[test]
+    fn a_random_skin_alone_is_still_just_a_skin() {
+        let pool = ["Rex", "Zed", "Max", "Ada"];
+        let mut rig = Rig::new("", "Rex\nZed\nMax\nAda\n");
+        rig.join("Alice", ALICE, 4);
+        rig.join("Bob", BOB, 0);
+        rig.run(ALICE, "skin random Bob");
+        assert!(skin_account(&rig, BOB, &pool).is_some());
+        assert_eq!(rig.nickname(BOB), None);
+    }
+
     #[test]
     fn a_name_is_not_drawn_twice_until_the_whole_pool_has_been_used() {
         let mut rig = Rig::new("", "Rex\nZed\nMax\nAlex\nSteve\nAda\n");
@@ -1516,9 +1627,10 @@ mod tests {
         );
         rig.run(ALICE, "nick random Bob");
         let pinned = rig.nickname(BOB).unwrap();
+        // The name's skin is kept, and so is the skin of the other account that is worn.
         assert_eq!(
             rig.answer(ALICE, "nick pool check"),
-            ["The pool has 4 names: 1 with their skin kept, 3 not looked up yet"]
+            ["The pool has 4 names: 2 with their skin kept, 2 not looked up yet"]
         );
         // One that is kept is answered at once.
         assert_eq!(
@@ -1532,9 +1644,10 @@ mod tests {
         );
         // One that is not is looked up.
         rig.host.told.clear();
+        let worn = rig.host.textures[&BOB].clone();
         let other = ["Rex", "Zed", "Max", "Ada"]
             .into_iter()
-            .find(|n| *n != pinned)
+            .find(|n| *n != pinned && worn != skin_of(n))
             .unwrap();
         assert_eq!(
             rig.run(ALICE, &format!("nick pool check {other}")),
@@ -1689,7 +1802,13 @@ mod tests {
         let nickname = rig.nickname(BOB).expect("a player gets one on joining");
         assert!(POOL.lines().any(|n| n == nickname), "{nickname}");
         assert_eq!(rig.host.nicknames[&BOB], nickname);
-        assert_eq!(rig.host.textures[&BOB], skin_of(&nickname));
+        // The skin is another account's of the pool, so it does not give the name away.
+        assert_ne!(rig.host.textures[&BOB], skin_of(&nickname));
+        assert!(
+            POOL.lines().any(|n| rig.host.textures[&BOB] == skin_of(n)),
+            "{:?}",
+            rig.host.textures[&BOB]
+        );
         assert_eq!(
             rig.host.told_to(BOB),
             [format!(

@@ -155,6 +155,21 @@ impl Pool {
         }
     }
 
+    /// A random name that is not in `excluded` (lower case) and not known to be no account, picked
+    /// without changing the order names are drawn in: the account whose skin goes with a nickname that
+    /// is another's.
+    pub fn pick_other(&self, rng: &mut Rng, excluded: &HashSet<String>) -> Option<String> {
+        let candidates: Vec<&String> = self
+            .names
+            .iter()
+            .filter(|n| {
+                let lower = n.to_ascii_lowercase();
+                !excluded.contains(&lower) && !self.bad.contains(&lower)
+            })
+            .collect();
+        (!candidates.is_empty()).then(|| candidates[rng.below(candidates.len())].clone())
+    }
+
     /// The next name that is not in `taken` (lower case) and not known to be no account. Every name
     /// comes once before any comes again; None when no name is left to draw at all.
     pub fn draw(&mut self, rng: &mut Rng, taken: &HashSet<String>) -> Option<String> {

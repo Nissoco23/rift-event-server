@@ -219,6 +219,17 @@ enum Task {
         /// A skin only: the name is not used and is not reserved.
         skin: bool,
     },
+    /// A random nickname whose name is drawn and found to be an account: its skin is not used, a
+    /// random one of the pool is, so the skin does not give the name away. `own` is the name's own
+    /// skin, which stays when no other can be had.
+    Donor {
+        uuid: u128,
+        own: Skin,
+        candidate: String,
+        draws: u32,
+        actor: Actor,
+        batch: Option<u64>,
+    },
     /// The skin `/skin` was asked to put on a player. Only the newest ask for a player counts.
     Wear {
         uuid: u128,
@@ -241,16 +252,17 @@ enum Task {
 impl Task {
     fn uuid(&self) -> Option<u128> {
         match self {
-            Self::Skin { uuid, .. } | Self::Random { uuid, .. } | Self::Wear { uuid, .. } => {
-                Some(*uuid)
-            }
+            Self::Skin { uuid, .. }
+            | Self::Random { uuid, .. }
+            | Self::Donor { uuid, .. }
+            | Self::Wear { uuid, .. } => Some(*uuid),
             Self::PoolAdd { .. } | Self::PoolCheck { .. } => None,
         }
     }
 
     fn batch(&self) -> Option<u64> {
         match self {
-            Self::Random { batch, .. } => *batch,
+            Self::Random { batch, .. } | Self::Donor { batch, .. } => *batch,
             _ => None,
         }
     }
@@ -261,7 +273,9 @@ impl Task {
             | Self::Wear { lower: l, .. }
             | Self::PoolAdd { lower: l, .. }
             | Self::PoolCheck { lower: l, .. } => l == lower,
-            Self::Random { candidate, .. } => candidate.eq_ignore_ascii_case(lower),
+            Self::Random { candidate, .. } | Self::Donor { candidate, .. } => {
+                candidate.eq_ignore_ascii_case(lower)
+            }
         }
     }
 }
@@ -613,13 +627,18 @@ impl State {
             .partition(gone);
         self.waiting = kept;
         for task in gone_tasks {
-            if let Task::Random {
-                candidate,
-                skin: false,
-                ..
-            } = &task
-            {
-                self.reserved.remove(&candidate.to_ascii_lowercase());
+            match &task {
+                Task::Random {
+                    candidate,
+                    skin: false,
+                    ..
+                } => {
+                    self.reserved.remove(&candidate.to_ascii_lowercase());
+                }
+                Task::Donor { own, .. } => {
+                    self.reserved.remove(&own.account.to_ascii_lowercase());
+                }
+                _ => {}
             }
             self.batch_left(task.batch());
         }
@@ -1382,58 +1401,136 @@ impl State {
                 actor,
                 batch,
                 skin: only_skin,
-            } => {
-                if !only_skin {
-                    self.reserved.remove(&candidate.to_ascii_lowercase());
-                }
-                match result {
-                    Ok(skin) => {
-                        // A name of the pool: its skin is kept for good.
-                        self.skins.pin(&skin);
-                        if self.roster.get(uuid).is_none() {
-                            self.batch_left(batch);
-                            return;
+            } => match result {
+                Ok(skin) => {
+                    // A name of the pool: its skin is kept for good.
+                    self.skins.pin(&skin);
+                    if self.roster.get(uuid).is_none() {
+                        if !only_skin {
+                            self.reserved.remove(&candidate.to_ascii_lowercase());
                         }
-                        let ended = if only_skin {
-                            let account = skin.account.clone();
-                            if self.wear(host, uuid, &skin, &actor, true) {
-                                Ok((account, true))
-                            } else {
-                                Err(None)
-                            }
+                        self.batch_left(batch);
+                        return;
+                    }
+                    if only_skin {
+                        let account = skin.account.clone();
+                        let ended = if self.wear(host, uuid, &skin, &actor, true) {
+                            Ok((account, true))
                         } else {
-                            let nickname = skin.account.clone();
-                            match self.set(host, uuid, &nickname, &actor, Plan::Have(skin)) {
-                                Some(skin_ok) => Ok((nickname, skin_ok)),
-                                // Told by `set`.
-                                None => Err(None),
-                            }
+                            Err(None)
                         };
-                        self.drew(host, uuid, &actor, batch, only_skin, ended);
-                    }
-                    Err(Failure::NoAccount) => {
-                        self.pool.mark_bad(&candidate);
-                        self.draw(host, uuid, actor, batch, only_skin, draws, silences);
-                    }
-                    Err(Failure::Unavailable) => {
-                        self.pool.give_back(&candidate);
-                        if silences + 1 >= MOST_SILENCES {
-                            let real = self.roster.get(uuid).map(|m| m.name.clone());
-                            let what = if only_skin { "skin" } else { "nickname" };
-                            let why = format!(
-                                "Mojang's services are not answering, so no random {what} could be chosen for {}. Try again in a minute",
-                                accent(&real.unwrap_or_default())
-                            );
-                            self.drew(host, uuid, &actor, batch, only_skin, Err(Some(why)));
-                        } else {
-                            self.draw(host, uuid, actor, batch, only_skin, draws, silences + 1);
-                        }
+                        self.drew(host, uuid, &actor, batch, true, ended);
+                    } else {
+                        // The name is held while a skin of another account is drawn.
+                        self.pick_donor(host, uuid, skin, actor, batch, 0);
                     }
                 }
-            }
+                Err(Failure::NoAccount) => {
+                    if !only_skin {
+                        self.reserved.remove(&candidate.to_ascii_lowercase());
+                    }
+                    self.pool.mark_bad(&candidate);
+                    self.draw(host, uuid, actor, batch, only_skin, draws, silences);
+                }
+                Err(Failure::Unavailable) => {
+                    if !only_skin {
+                        self.reserved.remove(&candidate.to_ascii_lowercase());
+                    }
+                    self.pool.give_back(&candidate);
+                    if silences + 1 >= MOST_SILENCES {
+                        let real = self.roster.get(uuid).map(|m| m.name.clone());
+                        let what = if only_skin { "skin" } else { "nickname" };
+                        let why = format!(
+                            "Mojang's services are not answering, so no random {what} could be chosen for {}. Try again in a minute",
+                            accent(&real.unwrap_or_default())
+                        );
+                        self.drew(host, uuid, &actor, batch, only_skin, Err(Some(why)));
+                    } else {
+                        self.draw(host, uuid, actor, batch, only_skin, draws, silences + 1);
+                    }
+                }
+            },
+            Task::Donor {
+                uuid,
+                own,
+                candidate,
+                draws,
+                actor,
+                batch,
+            } => match result {
+                Ok(donor) => {
+                    self.skins.pin(&donor);
+                    let nickname = own.account.clone();
+                    self.finish_random(host, uuid, nickname, donor, actor, batch);
+                }
+                Err(Failure::NoAccount) => {
+                    self.pool.mark_bad(&candidate);
+                    self.pick_donor(host, uuid, own, actor, batch, draws);
+                }
+                // The services do not answer: the name's own skin will do.
+                Err(Failure::Unavailable) => {
+                    let nickname = own.account.clone();
+                    self.finish_random(host, uuid, nickname, own, actor, batch);
+                }
+            },
             Task::PoolAdd { lower, actor } => self.pool_add_came(host, &lower, &actor, result),
             Task::PoolCheck { lower, actor } => self.pool_check_came(host, &lower, &actor, result),
         }
+    }
+
+    /// A random nickname has its name, `own` the skin of that account: draws another name of the pool
+    /// for its skin, so the skin does not match the name. After too many that are no account, or when
+    /// the pool has no other, the name's own skin stays.
+    fn pick_donor(
+        &mut self,
+        host: &mut dyn Host,
+        uuid: u128,
+        own: Skin,
+        actor: Actor,
+        batch: Option<u64>,
+        draws: u32,
+    ) {
+        if draws < MOST_DRAWS {
+            let taken: HashSet<String> =
+                std::iter::once(own.account.to_ascii_lowercase()).collect();
+            if let Some(candidate) = self.pool.pick_other(&mut self.rng, &taken) {
+                self.waiting.push(Task::Donor {
+                    uuid,
+                    own,
+                    candidate: candidate.clone(),
+                    draws: draws + 1,
+                    actor,
+                    batch,
+                });
+                self.skins.request(&candidate);
+                return;
+            }
+        }
+        let nickname = own.account.clone();
+        self.finish_random(host, uuid, nickname, own, actor, batch);
+    }
+
+    /// Gives the player the random nickname with `skin`, and answers for it.
+    fn finish_random(
+        &mut self,
+        host: &mut dyn Host,
+        uuid: u128,
+        nickname: String,
+        skin: Skin,
+        actor: Actor,
+        batch: Option<u64>,
+    ) {
+        self.reserved.remove(&nickname.to_ascii_lowercase());
+        if self.roster.get(uuid).is_none() {
+            self.batch_left(batch);
+            return;
+        }
+        let ended = match self.set(host, uuid, &nickname, &actor, Plan::Have(skin)) {
+            Some(skin_ok) => Ok((nickname, skin_ok)),
+            // Told by `set`.
+            None => Err(None),
+        };
+        self.drew(host, uuid, &actor, batch, false, ended);
     }
 
     /// The skin for a nickname that names an account.

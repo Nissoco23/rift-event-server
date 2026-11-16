@@ -16,7 +16,7 @@ All of it is for operators of level 2 (the console too), or whoever a permission
 | `/nick <name>` | Nicknames you. |
 | `/nick <player> <name>` | Nicknames that player. Says so if they are not on the server. |
 | `/nick off [players]` | Takes the nickname off you, or off the players named. Says so if there is none. |
-| `/nick random [players]` | Gives you, or the players named, a random nickname from the pool. |
+| `/nick random [players]` | Gives you, or the players named, a random nickname from the pool, and the skin of another random account of it. |
 | `/nick off --admin`, `/nick random --admin` | The same for every operator online. |
 | `/nick info <nickname>` | Who the nickname really is: real name, UUID, who set it, whose skin. A real name works too. |
 | `/nick list` | Every nickname in force, with the real name and UUID. |
@@ -41,6 +41,11 @@ with options in brackets is refused. The console has no `@s` or `@p`.
   looked up on Mojang's services in the background, so the nickname itself is never held up. If there
   is no such account, or the services do not answer, the player keeps their skin and the operator is
   told.
+- A random nickname does not bring its own account's skin: it gets the skin of another random account of the pool
+  (drawn separately from the names, never the nickname's own account), so the skin does not give the name away.
+  The name's own skin stays only when the pool has no other account, or Mojang's services do not answer for
+  the one drawn. `/nick info` names the account whose skin is worn. This holds for the nickname given on join
+  (`/nickonjoin`) and for `/nick random`. A nickname an operator types is still given the skin of that account.
 - `off` gives back the name and the skin the player came with.
 - When a player joins with the name of a nickname in force, that nickname is taken off and the
   operators are told.
