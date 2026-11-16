@@ -35,8 +35,14 @@ cargo build --profile "$profile" -p rift-engine
 cargo build --profile "$profile" -p horizon-server -p horizon-prepare
 
 mkdir -p dist
-cp "target/$profile/rift-engine" dist/rift-engine
-cp "target/$profile/horizon-server" dist/rift-server
-cp "target/$profile/horizon-prepare" dist/rift-prepare
+# Each program is copied beside its place and renamed over it, so one that is running keeps its old
+# file instead of being overwritten under it (which can crash it).
+install_program() {
+    cp "target/$profile/$1" "dist/$2.new"
+    mv -f "dist/$2.new" "dist/$2"
+}
+install_program rift-engine rift-engine
+install_program horizon-server rift-server
+install_program horizon-prepare rift-prepare
 
 echo "Built dist/rift-server, dist/rift-engine and dist/rift-prepare ($profile profile)."
