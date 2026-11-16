@@ -50,7 +50,7 @@ Bob death protection is already disabled
 Death protection has been disabled for 29 players
 ```
 
-The minimum health line is gray.
+The minimum health line is gray, with the hearts in the accent colour.
 
 A health point is half a heart, so level 1 is `0.5 hearts`, 2 is `1 heart` and 3 is `1.5 hearts`: only exactly one
 heart is singular.

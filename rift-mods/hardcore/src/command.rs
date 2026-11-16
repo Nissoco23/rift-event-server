@@ -388,7 +388,7 @@ fn announce(
             ));
             if on {
                 out.say(&format!(
-                    "<gray>Minimum health: {}</gray>",
+                    "<gray>Minimum health: <accent>{}</accent></gray>",
                     hearts(state.protection_of(one.uuid).level)
                 ));
             }

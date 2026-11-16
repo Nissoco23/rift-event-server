@@ -531,16 +531,22 @@ mod scenarios {
     }
 
     #[test]
-    fn the_minimum_health_is_told_in_gray() {
+    fn the_minimum_health_is_gray_with_the_hearts_in_the_accent() {
         let mut r = rig();
         said(r.say(OP, "deathprotect on bob"));
         let line = r.host.styled.last().expect("a second line");
         assert_eq!(line.plain(), "Minimum health: 0.5 hearts");
-        assert!(
-            line.spans
-                .iter()
-                .all(|span| span.style.color == Some(rift_chat::GRAY)),
-            "{line:?}"
+        let colours: Vec<(String, Option<u32>)> = line
+            .spans
+            .iter()
+            .map(|span| (span.text.clone(), span.style.color))
+            .collect();
+        assert_eq!(
+            colours,
+            [
+                ("Minimum health: ".to_owned(), Some(rift_chat::GRAY)),
+                ("0.5 hearts".to_owned(), Some(rift_chat::ACCENT)),
+            ]
         );
     }
 
