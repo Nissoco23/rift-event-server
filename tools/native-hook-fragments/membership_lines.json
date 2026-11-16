@@ -1,0 +1,11 @@
+{
+  "hooks": [],
+  "helpers": [
+    {"name": "set_membership_lines", "target": "horizon_client::game::native_membership::Game<'_>::native_set_membership_lines"}
+  ],
+  "rust_summary": "the \"joined the game\" and \"left the game\" lines turned on or off (`native_set_membership_lines`).",
+  "doc_summary": "`native_set_membership_lines(show)` turns the lines that announce a player joining or leaving on or off for everyone, as a mod that announces a leaving itself needs. Bundles need \"hooks\": @API:membership_lines@.",
+  "comments": [
+    "crates/horizon-client/src/game/native_membership.rs"
+  ]
+}

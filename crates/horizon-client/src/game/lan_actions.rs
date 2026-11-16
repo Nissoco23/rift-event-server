@@ -4557,10 +4557,19 @@ impl Game<'_> {
             self.native_player_died_v2(uuid, &name, &text);
             let message = if self.ui.rules.bool("show_death_messages") {
                 let message = horizon_client::lan::data::component_nbt(&text.component());
+                // A mod may change what the others are told, and how near they must be.
+                let (mut line, mut radius) = (Some(text.clone()), None);
+                self.native_player_death_message(uuid, &name, &mut line, &mut radius);
+                let told =
+                    line.map(|line| horizon_client::lan::data::component_nbt(&line.component()));
+                let near = radius.map(|radius| host.hub.names_within(conn, radius));
                 let board = &self.score.board;
-                host.hub.system_message_to(message.clone(), |other| {
-                    horizon_client::scoreboard::death_message_reaches(board, &name, other)
-                });
+                if let Some(told) = told {
+                    host.hub.system_message_to(told, |other| {
+                        horizon_client::scoreboard::death_message_reaches(board, &name, other)
+                            && near.as_ref().is_none_or(|near| near.contains(other))
+                    });
+                }
                 if self.options.dedicated.is_some() {
                     super::dedicated::events::record(
                         "death",

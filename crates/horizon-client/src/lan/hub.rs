@@ -307,6 +307,9 @@ pub struct Hub {
     pub native_menu_returns: Vec<super::menu::NativeReturn>,
     /// Kicks waiting for the game thread to notify native mods.
     pending_kicks: Vec<HostEvent>,
+    /// Whether the "joined the game" and "left the game" lines are sent (a native mod turns them
+    /// off with `native_set_membership_lines`). They are on, as in vanilla.
+    pub membership_lines: bool,
     /// `[transfer]` on (a dedicated server's `--transfers`): the players a proxy
     /// said would arrive (`player-expect`). None while it is off.
     pub transfers: Option<super::arrivals::Transfers>,
@@ -793,6 +796,7 @@ impl Hub {
             native_menu_events: Vec::new(),
             native_menu_returns: Vec::new(),
             pending_kicks: Vec::new(),
+            membership_lines: true,
             transfers: None,
             native_tracking: Vec::new(),
             attachment_snapshots: Vec::new(),
@@ -1105,6 +1109,24 @@ impl Hub {
         for g in self.guests.iter().filter(|g| g.placed && hears(&g.name)) {
             g.sender.send(body.clone());
         }
+    }
+    /// The names of the placed guests in the dimension of guest `conn` and within `radius` blocks
+    /// of them, themselves included: who a message that must be near them reaches.
+    pub fn names_within(&self, conn: u32, radius: f64) -> std::collections::HashSet<String> {
+        let Some(origin) = self.guests.iter().find(|g| g.conn == conn) else {
+            return std::collections::HashSet::new();
+        };
+        let limit = radius.max(0.0).powi(2);
+        self.guests
+            .iter()
+            .filter(|g| {
+                g.placed && g.dimension == origin.dimension && {
+                    let d = (0..3).map(|k| (g.position[k] - origin.position[k]).powi(2));
+                    d.sum::<f64>() <= limit
+                }
+            })
+            .map(|g| g.name.clone())
+            .collect()
     }
     /// `ServerPlayer.sendSystemMessage` to the guest with `uuid`, in any
     /// dimension.
@@ -1558,14 +1580,16 @@ impl Hub {
         // a native mod hides it from). A held player is not announced, and
         // not placed.
         if !held {
-            let joined = C::SystemChat(play::SystemChat {
-                content: self.joined_line(uuid, &name),
-                overlay: false,
-            })
-            .encode();
-            for g in self.guests.iter().filter(|g| g.placed && g.conn != conn) {
-                if self.sees(g.permission, uuid) {
-                    g.sender.send(joined.clone());
+            if self.membership_lines {
+                let joined = C::SystemChat(play::SystemChat {
+                    content: self.joined_line(uuid, &name),
+                    overlay: false,
+                })
+                .encode();
+                for g in self.guests.iter().filter(|g| g.placed && g.conn != conn) {
+                    if self.sees(g.permission, uuid) {
+                        g.sender.send(joined.clone());
+                    }
                 }
             }
             self.guests[i].placed = true;
@@ -1775,7 +1799,7 @@ impl Hub {
             let g = &self.guests[i];
             (g.name.clone(), g.uuid, g.game_mode, g.conn)
         };
-        if announce {
+        if announce && self.membership_lines {
             let joined = C::SystemChat(play::SystemChat {
                 content: self.joined_line(uuid, &name),
                 overlay: false,
@@ -2677,7 +2701,7 @@ impl Hub {
             if o.tab_hidden.remove(&g.uuid) {
                 continue;
             }
-            if !g.quiet_leave {
+            if !g.quiet_leave && self.membership_lines {
                 o.sender.send(left.clone());
             }
         }

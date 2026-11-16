@@ -1,0 +1,16 @@
+{
+  "hooks": [
+    {
+      "name": "living_damage_pre_v2",
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_living_damage_pre_v2",
+      "neoforge": "none (NeoForge's LivingDamageEvent.Pre has no health or totem)",
+      "side": "server",
+      "cancellable": false,
+      "mod_api": {
+        "contract": "listen"
+      }
+    }
+  ],
+  "rust_summary": "the damage a player's health is about to take, with the health they have and whether a totem would save them (`native_living_damage_pre_v2`).",
+  "doc_summary": "`native_living_damage_pre_v2(entity, victim_uuid, kind, damage_type, causing, direct, health, totem_ready, amount)`: `native_living_damage_pre` for a player, right after it, with the player's UUID, the health they have before the hit comes off, and whether either hand holds a death-protection item (a totem of undying), which a hit that would kill them uses up. `amount` is what is about to come off after armour, enchantments, effects and absorption: change it as in v1, so a mod can keep a player's health above a floor. Bundles need \"hooks\": @API:living_damage_pre_v2@."
+}

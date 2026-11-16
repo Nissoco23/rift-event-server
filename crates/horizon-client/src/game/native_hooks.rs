@@ -8974,6 +8974,21 @@ impl Game<'_> {
     /// `player` (`name`) is joining: the "joined the game" line the host's chat
     /// shows (`line`). Set `line` to `None` to show nothing, or replace it. Only
     /// the host's chat is asked: a dedicated server sends no such line. Server-side.
+    /// What a server player's death tells the others, asked when death messages are shown
+    /// (`ServerPlayer.die`'s `broadcastSystemMessage`): `line` is the death message and a mod may
+    /// replace it, or set it to `None` to tell nobody; `radius` is `None` (everyone the team lets
+    /// see it) and a mod may set a distance in blocks, which keeps the line to players in the dying
+    /// player's dimension within it, themselves included. The dying player's death screen and the
+    /// log keep the death message. Server-side. API @API:player_death_message@.
+    pub(super) fn native_player_death_message(
+        &mut self,
+        player: u128,
+        name: &str,
+        line: &mut Option<Text>,
+        radius: &mut Option<f64>,
+    ) {
+        mod_api::dispatch_player_death_message(self, mod_api::mods(), player, name, line, radius);
+    }
     /// Pending API @API:player_join_message@.
     pub(super) fn native_player_join_message(
         &mut self,
@@ -9550,6 +9565,36 @@ impl Game<'_> {
             amount,
         );
     }
+    /// `native_living_damage_pre` for a player, right after it, with their `victim_uuid` (none until
+    /// they act on the server), the `health` they have before the hit comes off (absorption is
+    /// already taken out of `amount`) and whether either hand holds a death-protection item, which
+    /// a hit that would kill them uses up (`totem_ready`). Change `amount` as in v1: a mod can cap
+    /// it at `health - floor` to keep a player alive. The other arguments are
+    /// `native_living_damage_pre`'s. Server thread, no `self`. API @API:living_damage_pre_v2@.
+    pub(super) fn native_living_damage_pre_v2(
+        entity: i32,
+        victim_uuid: Option<u128>,
+        kind: &str,
+        damage_type: &str,
+        causing: i32,
+        direct: i32,
+        health: f32,
+        totem_ready: bool,
+        amount: &mut f32,
+    ) {
+        mod_api::dispatch_living_damage_pre_v2(
+            mod_api::mods(),
+            entity,
+            victim_uuid,
+            kind,
+            damage_type,
+            causing,
+            direct,
+            health,
+            totem_ready,
+            amount,
+        );
+    }
     /// The end of `LivingEntity.actuallyHurt` (NeoForge's
     /// `LivingDamageEvent.Post`): `amount` came off entity `entity`'s health,
     /// 0 when nothing did (absorption took it all, or a mod made it 0), after
@@ -9993,6 +10038,7 @@ pub(super) fn hurt_server(hurting: Hurting<'_>, amount: &mut f32) -> bool {
 /// `native_living_damage_pre` for the damage code (`health::DAMAGE_PRE`). Its
 /// one caller.
 pub(super) fn damage_pre(hurting: Hurting<'_>, amount: &mut f32) {
+    let victim_uuid = super::native_damage::victim_uuid(&hurting);
     let (entity, kind, source) = hurt_server_args(hurting);
     Game::native_living_damage_pre(
         entity,
@@ -10002,6 +10048,20 @@ pub(super) fn damage_pre(hurting: Hurting<'_>, amount: &mut f32) {
         source.direct,
         amount,
     );
+    // A player's health and totem are known while their own hit runs.
+    if let Some((health, totem_ready)) = horizon_client::health::player_hit() {
+        Game::native_living_damage_pre_v2(
+            entity,
+            victim_uuid,
+            kind,
+            source.damage_type,
+            source.causing,
+            source.direct,
+            health,
+            totem_ready,
+            amount,
+        );
+    }
 }
 /// `native_living_damage_post` for the damage code (`health::DAMAGE_POST`).
 /// Its one caller.

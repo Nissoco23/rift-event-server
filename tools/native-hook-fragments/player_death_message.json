@@ -1,0 +1,16 @@
+{
+  "hooks": [
+    {
+      "name": "player_death_message",
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_death_message",
+      "neoforge": "none (NeoForge's LivingDeathEvent has no message to replace)",
+      "side": "server",
+      "cancellable": false,
+      "mod_api": {
+        "contract": "listen"
+      }
+    }
+  ],
+  "rust_summary": "the line a player's death tells the others, which a mod may replace, silence or keep near (`native_player_death_message`).",
+  "doc_summary": "`native_player_death_message(player, name, line, radius)` is asked for what a server player's death tells the others, when death messages are shown (`showDeathMessages`): `line` starts as the death message, and a mod may replace it or set it to `None` to tell nobody; `radius` starts as `None` (everyone, as in vanilla) and a mod may set it to a distance in blocks, so only players within it in the same dimension, the dying player included, hear the line. The dying player's own death screen keeps the death message, and the log too. Bundles need \"hooks\": @API:player_death_message@."
+}

@@ -1645,6 +1645,85 @@ fn leaving_ends_a_nickname_after_the_leave_line_has_used_it() {
     assert!(names(&hub.player_display_name(1, "Bob"), "Bob"));
 }
 
+/// A mod can turn the lines that announce a join and a leave off, and on again.
+#[test]
+fn the_join_and_leave_lines_can_be_turned_off() {
+    let (mut hub, _bob) = hub_with_a_guest();
+    let alice = add_guest(&mut hub, 2, 2, "Alice");
+    let _ = chat_lines(&alice);
+    hub.membership_lines = false;
+
+    // A player placed from the hand-over: no join line. The same player leaving: no leave line.
+    let carol = add_guest(&mut hub, 3, 3, "Carol");
+    hub.guests[2].placed = false;
+    hub.guests[2].held = true;
+    hub.place_arrival(2, true);
+    assert!(hub.guests[2].placed, "they are placed all the same");
+    assert!(chat_lines(&alice).is_empty(), "no join line");
+    hub.remove_guest(2, "left");
+    assert!(chat_lines(&alice).is_empty(), "no leave line");
+    let _ = chat_lines(&carol);
+
+    // On again, both are sent.
+    hub.membership_lines = true;
+    let _dave = add_guest(&mut hub, 4, 4, "Dave");
+    hub.guests[2].placed = false;
+    hub.guests[2].held = true;
+    hub.place_arrival(2, true);
+    let lines = chat_lines(&alice);
+    assert_eq!(lines.len(), 1, "one join line");
+    assert_eq!(
+        lines[0].get("translate"),
+        Some(&Tag::String("multiplayer.player.joined".into()))
+    );
+    hub.remove_guest(2, "left");
+    let lines = chat_lines(&alice);
+    assert_eq!(lines.len(), 1, "one leave line");
+    assert_eq!(
+        lines[0].get("translate"),
+        Some(&Tag::String("multiplayer.player.left".into()))
+    );
+}
+
+/// A message that must be near a player reaches the players placed within the distance of them, in
+/// their dimension, themselves included.
+#[test]
+fn names_within_a_distance_are_those_near_in_the_same_dimension() {
+    let (mut hub, _bob) = hub_with_a_guest();
+    let _alice = add_guest(&mut hub, 2, 2, "Alice");
+    let _carol = add_guest(&mut hub, 3, 3, "Carol");
+    let _dave = add_guest(&mut hub, 4, 4, "Dave");
+    let _erin = add_guest(&mut hub, 5, 5, "Erin");
+    for (i, at) in [
+        [0.0, 64.0, 0.0],
+        [30.0, 64.0, 0.0],
+        [0.0, 64.0, 10.0],
+        [200.0, 64.0, 0.0],
+        [0.0, 64.0, 0.0],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        hub.guests[i].position = at;
+    }
+    // Carol is in the nether, at the same place Bob's coordinates say; Erin has not been placed.
+    hub.guests[2].dimension = "minecraft:the_nether".into();
+    hub.guests[4].placed = false;
+    let names = |conn, radius| {
+        let mut names: Vec<String> = hub.names_within(conn, radius).into_iter().collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names(1, 50.0), ["Alice", "Bob"]);
+    // The distance itself is near.
+    assert_eq!(names(1, 30.0), ["Alice", "Bob"]);
+    assert_eq!(names(1, 29.9), ["Bob"]);
+    assert_eq!(names(1, 0.0), ["Bob"]);
+    assert_eq!(names(1, 1000.0), ["Alice", "Bob", "Dave"]);
+    assert_eq!(names(3, 5.0), ["Carol"]);
+    assert!(names(99, 50.0).is_empty(), "no such player");
+}
+
 /// A held player (a proxy's hand-over that never reached the world) has no leave line, but the
 /// session's names go with it too.
 #[test]
