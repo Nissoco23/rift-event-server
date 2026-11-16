@@ -3832,6 +3832,18 @@ impl Hub {
                 values,
             }));
         }
+        // ServerPlayer.updateOptions sets the skin layers the client asked for, and
+        // ServerEntity.sendDirtyEntityData sends them to the player too: its own model draws its
+        // layers from them, so a player never sent them sees none on themselves.
+        let g = &mut self.guests[i];
+        let layers = g.info.model_customisation;
+        if layers != g.sent_skin {
+            g.sent_skin = layers;
+            g.send(&C::SetEntityData(play::SetEntityData {
+                id: g.entity_id,
+                values: vec![(16, serializer::BYTE, Value::Byte(layers as i8))],
+            }));
+        }
         // Sent when the health or the food level changes, or the saturation
         // reaches or leaves zero; a dead player's health of 0 too.
         let g = &mut self.guests[i];
@@ -5112,6 +5124,8 @@ impl Hub {
             keep: 0,
         }));
         g.sent_pose = crate::pose::Pose::Standing;
+        // The client's new player has no skin layers until it is sent them again.
+        g.sent_skin = 0;
         // ClientPacketListener.handleRespawn without KEEP_ENTITY_DATA: the client's new player
         // starts with wasSprinting false. (A level change keeps it: the new player sprints on, or
         // says STOP.)

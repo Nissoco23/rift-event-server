@@ -211,6 +211,70 @@ fn self_pose_wire_lifecycle_preserves_existing_publishers() {
 }
 
 #[test]
+fn a_player_is_sent_their_own_skin_layers_and_again_when_they_change_or_the_client_starts_over() {
+    // The layers the player's client was last sent about itself, in order.
+    fn layers(rx: &std::sync::mpsc::Receiver<crate::lan::Out>) -> Vec<i8> {
+        let mut sent = Vec::new();
+        while let Ok(out) = rx.try_recv() {
+            let crate::lan::Out::Packet(body) = out else {
+                continue;
+            };
+            let mut r = horizon_protocol::buf::Reader::new(&body);
+            let id = r.varint().unwrap();
+            if let C::SetEntityData(p) = C::decode(id, r.rest()).unwrap() {
+                assert_eq!(p.id, 1, "only the player's own entity is sent");
+                for (slot, _, value) in p.values {
+                    if let (16, Value::Byte(bits)) = (slot, value) {
+                        sent.push(bits);
+                    }
+                }
+            }
+        }
+        sent
+    }
+    let (mut hub, rx) = hub_with_a_guest();
+    hub.sync_player_state(0);
+    assert_eq!(layers(&rx), [0x7f], "every layer the client asked for");
+    hub.sync_player_state(0);
+    assert!(layers(&rx).is_empty(), "once, until they change");
+    hub.guests[0].info.model_customisation = 0x41;
+    hub.sync_player_state(0);
+    assert_eq!(layers(&rx), [0x41]);
+    hub.guests[0].info.model_customisation = 0;
+    hub.sync_player_state(0);
+    assert_eq!(layers(&rx), [0], "all layers switched off is sent as well");
+
+    // The client's new player after a death starts with none, so they are sent again.
+    hub.guests[0].info.model_customisation = 0x7f;
+    hub.sync_player_state(0);
+    layers(&rx);
+    let mut world = World::new(horizon_world::registry::BlockStateId(0), 0);
+    let mut next_entity = 2;
+    let border = crate::worldborder::WorldBorder::default();
+    let ctx = TickCtx {
+        sea_level: 63,
+        world: &mut world,
+        entities: &[],
+        next_entity: &mut next_entity,
+        spawn: [0.5, 64.0, 0.5],
+        spawn_angle: [0.0; 2],
+        difficulty: 2,
+        difficulty_locked: false,
+        clock_rate: 1.0,
+        tick_rate: 20.0,
+        tick_frozen: false,
+        tick_steps: Default::default(),
+        collision: None,
+        border: &border,
+        streaming: None,
+    };
+    hub.respawn(0, [0.5, 64.0, 0.5], [0.0; 2], &ctx);
+    layers(&rx);
+    hub.sync_player_state(0);
+    assert_eq!(layers(&rx), [0x7f]);
+}
+
+#[test]
 fn transient_client_update_fields_reach_all_viewers_once_and_wait_without_viewers() {
     use crate::containers::{BlockEntity, ModBlockEntity, ModBlockEntityFields};
     use horizon_world::nbt::Compound;
