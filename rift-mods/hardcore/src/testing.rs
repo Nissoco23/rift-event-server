@@ -511,6 +511,26 @@ mod scenarios {
     }
 
     #[test]
+    fn saying_it_is_already_set_is_all_gray() {
+        let mut r = rig();
+        for line in [
+            "deathprotect off",
+            "deathprotect off bob",
+            "deathprotect off @a",
+        ] {
+            said(r.say(OP, line));
+            let text = r.host.styled.last().expect("a line");
+            assert!(text.plain().contains("already"), "{text:?}");
+            assert!(
+                text.spans
+                    .iter()
+                    .all(|span| span.style.color == Some(rift_chat::GRAY)),
+                "{line}: {text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn the_minimum_health_is_told_in_gray() {
         let mut r = rig();
         said(r.say(OP, "deathprotect on bob"));

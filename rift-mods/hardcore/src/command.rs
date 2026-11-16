@@ -370,14 +370,17 @@ fn announce(
     let word = if on { "enabled" } else { "disabled" };
     match targets {
         [one] => {
-            let whose = if is_self(actor, one) {
+            let name = escape(shown(one));
+            let mine = is_self(actor, one);
+            let whose = if mine {
                 "Your".to_owned()
             } else {
-                format!("<accent>{}</accent>", escape(shown(one)))
+                format!("<accent>{name}</accent>")
             };
             if !changed[0] {
                 return out.say(&format!(
-                    "<white>{whose} death protection is already <accent>{word}</accent></white>"
+                    "<gray>{} death protection is already {word}</gray>",
+                    if mine { "Your" } else { name.as_str() }
                 ));
             }
             out.say(&format!(
@@ -395,7 +398,7 @@ fn announce(
             let already = many.len() - did;
             if did == 0 {
                 return out.say(&format!(
-                    "<white>Death protection is already <accent>{word}</accent> for <accent>{}</accent></white>",
+                    "<gray>Death protection is already {word} for {}</gray>",
                     count(already, "player")
                 ));
             }
