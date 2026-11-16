@@ -1,5 +1,5 @@
-//! Operator nicknames for Rift Event Server: an operator gives a player (or themselves) another
-//! name and another skin, in chat, death and leave lines, the tab list and over their head, so a
+//! Operator nicknames and skins for Rift Event Server: an operator gives a player (or themselves)
+//! another name and another skin, or only another skin (`/skin`), in chat, death and leave lines, the tab list and over their head, so a
 //! scripted event can hide who is who. A random nickname is drawn from a pool of ordinary accounts,
 //! never the same name twice in a round. Nothing about a nickname is saved: it ends when the player
 //! leaves.

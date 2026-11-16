@@ -84,7 +84,7 @@ Game workspace (root `Cargo.toml`). The launcher and the other Horizon-only crat
 | `rift-chat` | Chat text in Rift's message style for the mods: MiniMessage-like markup (`<gray>`, `<accent>`, `<click:run_command:'/x'>`) to `Text`, and the two-line command error ([docs/rift-mods.md](docs/rift-mods.md#messages)) |
 | `rift-engine` | The server's engine program: the engine's `main` with every mod of `rift-mods/` handed to it; `scripts/build.sh` copies it to `dist/rift-engine` ([docs/rift-mods.md](docs/rift-mods.md)) |
 | `sculkstorm` (in `rift-mods/`) | The Sculkstorm Scythe, a native mod: Sculk Cataclysm and Soulstorm Ascension ([README](rift-mods/sculkstorm/README.md)) |
-| `nick` (in `rift-mods/`) | A native mod for operator nicknames: a name and another account's skin for a player, a pool for random ones ([README](rift-mods/nick/README.md)) |
+| `nick` (in `rift-mods/`) | A native mod for operator nicknames and skins: a name and another account's skin for a player, `/skin` for the skin alone, a pool for random ones ([README](rift-mods/nick/README.md)) |
 | `viewdistance` (in `rift-mods/`) | A native mod that limits how far each player is sent chunks: one distance for players, another for operators ([README](rift-mods/viewdistance/README.md)) |
 | `essentials` (in `rift-mods/`) | A native mod for operator shortcuts: `/gmc` `/gms` `/gmsp` `/gma` set a game mode, `/flyspeed` the flying speed ([README](rift-mods/essentials/README.md)) |
 

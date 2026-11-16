@@ -1,7 +1,7 @@
 # Nick
 
-Operator nicknames for Rift Event Server, as a native Rust mod. An operator gives a player (or
-themselves) another name and another skin, so a scripted event can hide who is who: the name shows in
+Operator nicknames and skins for Rift Event Server, as a native Rust mod. An operator gives a player (or
+themselves) another name and another skin, or just another skin (`/skin`), so a scripted event can hide who is who: the name shows in
 chat, death, advancement and leave lines, the tab list and over the player's head, and the skin is
 that of a real account. Nothing needs installing on the players' side. A nickname is never saved: it
 ends when the player leaves.
@@ -26,7 +26,7 @@ All of it is for operators of level 2 (the console too), or whoever a permission
 | `/nick reload` | Reads `nick.toml`, `nick-pool.txt` and `nick-skins.json` again. |
 | `/nickonjoin [off\|on\|all]` | Who gets a random nickname as they join: `on` (the default each start) everyone but operators, `all` operators too, `off` no one. Alone, says the setting. The setting is not saved: a server starts with `on`. |
 
-`players` is a name (the real one, or the nickname), `@s`, `@p`, `@r` or `@a`. `@a`, `@p` and `@r`
+`/skin` is described [below](#skins). `players` is a name (the real one, or the nickname), `@s`, `@p`, `@r` or `@a`. `@a`, `@p` and `@r`
 skip operators; `--admin` is the operators; `@s` and a name reach anyone, operators included. A selector
 with options in brackets is refused. The console has no `@s` or `@p`.
 
@@ -46,6 +46,39 @@ with options in brackets is refused. The console has no `@s` or `@p`.
   operators are told.
 
 Every change is logged: `Nick: <operator> set <real name> (<uuid>) to <nickname>`.
+
+### Skins
+
+`/skin` changes a player's skin and leaves their name alone. It takes the same permission as `/nick`
+(`nick.admin`, or an operator of `command-level`; the console too) and the same selectors.
+
+| Command | What it does |
+| --- | --- |
+| `/skin <account>` | Puts that account's skin on you. |
+| `/skin <player> <account>` | Puts it on that player (a name, a nickname, `@s`, `@p` or `@r`). Says so if they are not on the server. |
+| `/skin off [players]` | Gives you, or the players named, the skin they came with. Says so if they have no other skin on. |
+| `/skin random [players]` | Gives you, or the players named, the skin of a random account of the pool. |
+| `/skin off --admin`, `/skin random --admin` | The same for every operator online. |
+
+`players` is as for `/nick`: a name (the real one, or the nickname), `@s`, `@p`, `@r` or `@a`; `@a`, `@p`
+and `@r` skip operators and `--admin` is the operators.
+
+- The account is looked up on Mojang's services in the background, so the answer comes a moment after
+  the command. If no account has the name, or the services do not answer, the skin stays as it was and
+  the operator is told in the same two-line style as a command error. `off` and `random` are the command's
+  words, so `/skin off` is never the skin of an account named "off" (`/skin Bob off` is).
+- A random skin is drawn from the pool, as a random nickname is (a name is not drawn twice until every other
+  has been), and so is a skin that was looked at and kept in `config/nick-skins.json`. A name is not used:
+  only the skin is put on. A client only accepts textures Mojang signed, so a skin cannot be made up; the
+  pool is the list to edit (`/nick pool add`, `/nick pool remove`).
+- A skin is not saved: it ends when the player leaves, like a nickname.
+- It works with `/nick`. The skin a player came with is kept once, whichever command changes it first. A
+  nickname that is an account gives that skin; `/skin` afterwards replaces it, and the nickname coming off
+  leaves the `/skin` skin. `/skin off` takes the nickname's skin off too, and leaves the nickname. `/nick
+  info` says whose skin a player without a nickname wears. Switching the mod off in `nick.toml` takes every
+  skin off.
+
+Every change is logged: `Nick: <operator> set the skin of <real name> (<uuid>) to that of <account>`.
 
 ### Nicknames on join
 

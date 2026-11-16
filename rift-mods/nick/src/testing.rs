@@ -1621,9 +1621,11 @@ mod tests {
     fn the_command_is_registered_for_the_configs_level_and_a_new_level_reaches_the_players() {
         let mut rig = Rig::with_players();
         let usages = rig.registered();
-        assert_eq!(usages.len(), 16);
+        assert_eq!(usages.len(), 22);
         assert!(usages.iter().all(|(usage, level, node)| {
-            usage.starts_with("nick") && *level == 2 && node.as_deref() == Some("nick.admin")
+            (usage.starts_with("nick") || usage.starts_with("skin"))
+                && *level == 2
+                && node.as_deref() == Some("nick.admin")
         }));
         assert_eq!(rig.host.refreshed_commands, 0);
         rig.set_config("command-level = 3\n");
@@ -1907,5 +1909,449 @@ mod tests {
         assert!(rig.completions(ALICE, "nick off ").is_empty());
         assert!(rig.completions(ALICE, "nick pool add ").is_empty());
         assert!(rig.completions(ALICE, "gamemode ").is_empty());
+    }
+
+    // ---- skins ---------------------------------------------------------------------------
+
+    fn worn(rig: &Rig, uuid: u128) -> Option<String> {
+        rig.nick
+            .state
+            .lock()
+            .unwrap()
+            .worn
+            .get(&uuid)
+            .map(|w| w.account.clone())
+    }
+
+    /// The account whose skin a player wears, if the textures are one of the pool's.
+    fn pool_skin(rig: &Rig, uuid: u128) -> Option<&'static str> {
+        ["Rex", "Zed", "Max", "Ada"]
+            .into_iter()
+            .find(|a| rig.host.textures[&uuid] == skin_of(a))
+    }
+
+    #[test]
+    fn a_skin_for_oneself_puts_the_accounts_skin_on_and_leaves_the_name() {
+        let mut rig = Rig::with_players();
+        assert!(rig.answer(ALICE, "/skin Captain").is_empty());
+        rig.tick();
+        assert_eq!(rig.host.textures[&ALICE], skin_of("Captain"));
+        assert_eq!(
+            rig.host.calls,
+            [
+                Call::Property(ALICE, skin_of("Captain")),
+                Call::Refresh(ALICE)
+            ],
+            "the skin and the player's view of it, and no name or tag"
+        );
+        assert_eq!(rig.host.told_to(ALICE), ["Your skin is now Captain!"]);
+        assert!(rig.nickname(ALICE).is_none());
+        assert_eq!(
+            rig.host.logged(),
+            [format!(
+                "INFO: Nick: Alice set the skin of Alice ({ALICES_ID}) to that of Captain"
+            )]
+        );
+    }
+
+    #[test]
+    fn a_skin_for_another_player_tells_the_operator_and_the_player() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin Bob Rex");
+        assert_eq!(rig.host.textures[&BOB], skin_of("Rex"));
+        assert_eq!(rig.host.told_to(ALICE), ["Gave Bob the skin of Rex!"]);
+        assert_eq!(rig.host.told_to(BOB), ["Your skin is now Rex"]);
+        assert_eq!(rig.host.textures[&EVE], own_skin("Eve"), "only Bob");
+        // An account is written as the account writes it.
+        rig.run(ALICE, "skin Bob zed");
+        assert_eq!(rig.host.textures[&BOB], skin_of("Zed"));
+        assert_eq!(worn(&rig, BOB).as_deref(), Some("Zed"));
+    }
+
+    #[test]
+    fn a_player_who_is_not_on_the_server_is_refused_at_once() {
+        let mut rig = Rig::with_players();
+        assert_eq!(
+            rig.answer(ALICE, "skin Zork Rex"),
+            refused("skin Zork", "Player was not found")
+        );
+        rig.tick();
+        assert!(rig.host.calls.is_empty());
+        assert!(rig.lookup.asked_for().is_empty(), "no account is looked up");
+    }
+
+    #[test]
+    fn an_account_that_does_not_exist_is_an_error_when_the_lookup_comes_back() {
+        let mut rig = Rig::with_players();
+        assert!(rig.answer(ALICE, "skin Bob Nobody1").is_empty());
+        rig.tick();
+        assert_eq!(
+            rig.host.told_to(ALICE),
+            [
+                "Unknown or incomplete command. See below for error",
+                "...ob Nobody1<--[No account is called Nobody1]"
+            ]
+        );
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"), "nothing changed");
+        assert!(rig.host.told_to(BOB).is_empty());
+        assert!(worn(&rig, BOB).is_none());
+    }
+
+    #[test]
+    fn services_that_do_not_answer_leave_the_skin_alone_and_say_so() {
+        let mut rig = Rig::with_players();
+        rig.lookup.down.store(true, Ordering::SeqCst);
+        rig.run(ALICE, "skin Captain");
+        assert_eq!(
+            rig.host.told_to(ALICE)[1],
+            "...in Captain<--[Mojang's services did not answer for Captain, so its skin is unknown]"
+        );
+        assert_eq!(rig.host.textures[&ALICE], own_skin("Alice"));
+    }
+
+    #[test]
+    fn the_console_sees_a_failed_lookup_in_the_log() {
+        let mut rig = Rig::with_players();
+        rig.run_console("skin Bob Nobody1");
+        assert!(rig.host.logged().iter().any(|l| l.contains(
+            "Nick: (for console) Unknown or incomplete command. See below for error Bob Nobody1<--[No account is called Nobody1]"
+        ) || l.contains("<--[No account is called Nobody1]")));
+        assert_eq!(
+            rig.answer(ALICE, "skin"),
+            refused(
+                "skin",
+                "Usage: /skin <account> | <player> <account> | off [players|--admin] | random [players|--admin]"
+            )
+        );
+    }
+
+    #[test]
+    fn a_name_that_cannot_be_an_account_is_refused_before_any_lookup() {
+        let mut rig = Rig::with_players();
+        assert_eq!(
+            rig.answer(ALICE, "skin Bob not-one"),
+            refused(
+                "...ob not-one",
+                "not-one is not an account name: 1 to 16 letters, digits or underscores"
+            )
+        );
+        assert!(rig.lookup.asked_for().is_empty());
+    }
+
+    #[test]
+    fn a_newer_skin_wins_over_an_older_one_that_was_asked_in_the_same_tick() {
+        let mut rig = Rig::with_players();
+        rig.say(ALICE, "skin Bob Rex");
+        rig.say(ALICE, "skin Bob Zed");
+        rig.tick();
+        assert_eq!(rig.host.textures[&BOB], skin_of("Zed"));
+        let changes = rig
+            .host
+            .calls
+            .iter()
+            .filter(|c| matches!(c, Call::Property(..)))
+            .count();
+        assert_eq!(changes, 1, "the older answer is dropped");
+    }
+
+    #[test]
+    fn skin_off_gives_the_skin_back_and_says_so() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin Captain");
+        assert_eq!(
+            rig.answer(ALICE, "skin off"),
+            ["Removed skins from 1 player!"]
+        );
+        rig.tick();
+        assert_eq!(rig.host.textures[&ALICE], own_skin("Alice"));
+        assert!(worn(&rig, ALICE).is_none());
+        assert_eq!(
+            rig.host.told_to(ALICE).last().unwrap(),
+            "Your skin has been removed"
+        );
+        // Another player's, by their name.
+        rig.run(ALICE, "skin Bob Rex");
+        assert_eq!(
+            rig.answer(ALICE, "skin off Bob"),
+            ["Removed skins from 1 player!"]
+        );
+        rig.tick();
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+        assert_eq!(
+            rig.host.told_to(BOB).last().unwrap(),
+            "Your skin has been removed",
+            "the player is told when someone else takes it off"
+        );
+    }
+
+    #[test]
+    fn skin_off_without_a_different_skin_is_an_error() {
+        let mut rig = Rig::with_players();
+        assert_eq!(
+            rig.answer(ALICE, "skin off"),
+            refused("skin off", "You do not have a skin set")
+        );
+        assert_eq!(
+            rig.answer(ALICE, "skin off Bob"),
+            refused("...in off Bob", "Bob does not have a skin set")
+        );
+        assert_eq!(
+            rig.answer(ALICE, "skin off @a"),
+            refused("...kin off @a", "None of them has a skin set")
+        );
+        assert_eq!(
+            rig.answer(ALICE, "skin off Zork"),
+            refused("...n off Zork", "Player was not found")
+        );
+        rig.tick();
+        assert!(rig.host.calls.is_empty());
+    }
+
+    #[test]
+    fn a_player_is_found_by_their_name_or_their_nickname() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "nick Bob Captain");
+        // The nickname's skin is a skin that can be taken off, by either name.
+        assert_eq!(
+            rig.answer(ALICE, "skin off Captain"),
+            ["Removed skins from 1 player!"]
+        );
+        rig.tick();
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+        assert_eq!(
+            rig.nickname(BOB).as_deref(),
+            Some("Captain"),
+            "the name stays"
+        );
+        assert_eq!(
+            rig.answer(ALICE, "skin off Bob"),
+            refused("...in off Bob", "Bob does not have a skin set")
+        );
+        rig.run(ALICE, "skin Captain Rex");
+        assert_eq!(rig.host.textures[&BOB], skin_of("Rex"));
+        assert_eq!(
+            rig.answer(ALICE, "skin off Bob"),
+            ["Removed skins from 1 player!"]
+        );
+    }
+
+    #[test]
+    fn a_skin_survives_the_nickname_coming_off_and_the_original_is_not_lost() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "nick Bob Captain");
+        rig.run(ALICE, "skin Bob Rex");
+        assert_eq!(rig.nickname(BOB).as_deref(), Some("Captain"));
+        rig.run(ALICE, "nick off Bob");
+        assert!(rig.nickname(BOB).is_none());
+        assert_eq!(
+            rig.host.textures[&BOB],
+            skin_of("Rex"),
+            "the skin was not the nickname's to take off"
+        );
+        rig.run(ALICE, "skin off Bob");
+        assert_eq!(
+            rig.host.textures[&BOB],
+            own_skin("Bob"),
+            "the skin Bob came with, not the nickname's"
+        );
+    }
+
+    #[test]
+    fn the_skin_a_player_came_with_comes_back_after_a_skin_and_then_a_nickname() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin Bob Rex");
+        rig.run(ALICE, "nick Bob Captain");
+        assert_eq!(
+            rig.host.textures[&BOB],
+            skin_of("Captain"),
+            "the nickname's own"
+        );
+        assert!(worn(&rig, BOB).is_none(), "it replaced the /skin skin");
+        rig.run(ALICE, "nick off Bob");
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+    }
+
+    #[test]
+    fn nick_info_says_whose_skin_a_player_without_a_nickname_wears() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin Bob Rex");
+        assert_eq!(
+            rig.answer(ALICE, "nick info Bob"),
+            ["Bob is not nicknamed", "Skin set by Alice: the skin of Rex"]
+        );
+    }
+
+    #[test]
+    fn a_random_skin_is_one_of_the_pools_and_leaves_the_name_alone() {
+        let mut rig = Rig::with_players();
+        assert_eq!(
+            rig.answer(ALICE, "skin random"),
+            ["Choosing random skin for you..."]
+        );
+        rig.tick();
+        let skin = pool_skin(&rig, ALICE).expect("a skin of the pool");
+        assert!(rig.nickname(ALICE).is_none());
+        assert!(rig.host.nicknames.is_empty() && rig.host.tags.is_empty());
+        assert_eq!(
+            rig.host.told_to(ALICE),
+            [format!("Assigned random skin {skin} to Alice!")]
+        );
+        assert_eq!(worn(&rig, ALICE).as_deref(), Some(skin));
+        assert_eq!(
+            rig.answer(ALICE, "skin random Bob"),
+            ["Choosing random skin for Bob..."]
+        );
+        rig.tick();
+        assert!(pool_skin(&rig, BOB).is_some());
+        assert_eq!(rig.host.told_to(BOB).len(), 1, "Bob is told what he wears");
+        assert!(rig.host.told_to(BOB)[0].starts_with("Your skin is now "));
+    }
+
+    #[test]
+    fn a_random_skin_does_not_use_up_the_names_a_nickname_may_take() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin random");
+        // Every name of the pool is still free as a nickname, and a name in use is no bar to a skin.
+        let worn_by_alice = worn(&rig, ALICE).unwrap();
+        rig.run(ALICE, &format!("nick Bob {worn_by_alice}"));
+        assert_eq!(rig.nickname(BOB).as_deref(), Some(worn_by_alice.as_str()));
+        rig.run(ALICE, "nick random Eve");
+        rig.run(ALICE, "skin random Bob");
+        assert!(rig.host.textures.contains_key(&BOB));
+    }
+
+    #[test]
+    fn random_skins_for_everyone_skip_operators_and_say_how_many() {
+        let mut rig = Rig::with_players();
+        assert_eq!(
+            rig.answer(ALICE, "skin random @a"),
+            ["Choosing random skin for 2 players..."]
+        );
+        rig.tick();
+        let (bob, eve) = (pool_skin(&rig, BOB), pool_skin(&rig, EVE));
+        assert!(bob.is_some() && eve.is_some());
+        assert_ne!(
+            bob, eve,
+            "a name is not drawn twice before every other has been"
+        );
+        assert_eq!(
+            rig.host.textures[&ALICE],
+            own_skin("Alice"),
+            "operators are skipped"
+        );
+        assert_eq!(
+            rig.host.told_to(ALICE),
+            ["Assigned random skins to 2 players!"]
+        );
+    }
+
+    #[test]
+    fn at_a_with_only_operators_points_to_admin_and_admin_reaches_them() {
+        let mut rig = Rig::plain();
+        rig.join("Alice", ALICE, 4);
+        rig.join("Eve", EVE, 4);
+        assert_eq!(
+            rig.answer(ALICE, "skin random @a"),
+            refused(
+                "...random @a",
+                "No player was found: operators are skipped, use /skin random --admin to target them"
+            )
+        );
+        assert_eq!(
+            rig.answer(ALICE, "skin random --admin"),
+            ["Choosing random skin for 2 players..."]
+        );
+        rig.tick();
+        assert!(pool_skin(&rig, ALICE).is_some() && pool_skin(&rig, EVE).is_some());
+        assert_eq!(
+            rig.answer(ALICE, "skin off --admin"),
+            ["Removed skins from 2 players!"]
+        );
+        rig.tick();
+        assert_eq!(rig.host.textures[&ALICE], own_skin("Alice"));
+        assert_eq!(rig.host.textures[&EVE], own_skin("Eve"));
+    }
+
+    #[test]
+    fn skin_off_for_everyone_skips_operators_and_players_without_a_skin() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin Alice Captain");
+        rig.run(ALICE, "skin Bob Rex");
+        assert_eq!(
+            rig.answer(ALICE, "skin off @a"),
+            ["Removed skins from 1 player!"],
+            "Eve has none, Alice is an operator"
+        );
+        rig.tick();
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+        assert_eq!(rig.host.textures[&ALICE], skin_of("Captain"));
+        assert_eq!(
+            rig.answer(ALICE, "skin off @s"),
+            ["Removed skins from 1 player!"]
+        );
+    }
+
+    #[test]
+    fn selectors_with_options_and_the_console_without_a_player_are_refused() {
+        let mut rig = Rig::with_players();
+        assert_eq!(
+            rig.answer(ALICE, "skin off @a[distance=..5]"),
+            refused(
+                "...tance=..5]",
+                "Selector options are not supported here: use @a, @p, @r, @s or a name"
+            )
+        );
+        rig.host.feedback.clear();
+        assert!(rig.console("skin random"));
+        assert_eq!(
+            rig.host.feedback,
+            refused("...kin random", "The console has no skin: name a player")
+        );
+        assert_eq!(rig.answer(ALICE, "skin Bob @a Rex").len(), 2);
+    }
+
+    #[test]
+    fn a_skin_ends_when_the_player_leaves() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin Bob Rex");
+        rig.leave(BOB);
+        assert!(worn(&rig, BOB).is_none());
+        rig.join("Bob", BOB, 0);
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+        assert_eq!(
+            rig.answer(ALICE, "skin off Bob"),
+            refused("...in off Bob", "Bob does not have a skin set")
+        );
+    }
+
+    #[test]
+    fn a_skin_waiting_for_its_lookup_is_dropped_when_it_is_taken_off() {
+        let mut rig = Rig::new_in_background("", "Rex\n");
+        rig.join("Bob", BOB, 0);
+        rig.join("Alice", ALICE, 4);
+        rig.lookup.held.store(true, Ordering::SeqCst);
+        rig.run(ALICE, "skin Bob Rex");
+        // Nothing is worn yet, but the ask still waiting is the skin to take off.
+        assert_eq!(
+            rig.answer(ALICE, "skin off Bob"),
+            ["Removed skins from 1 player!"]
+        );
+        rig.lookup.held.store(false, Ordering::SeqCst);
+        rig.ticks(1);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        rig.ticks(3);
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+    }
+
+    #[test]
+    fn switching_the_mod_off_takes_the_skins_off_and_the_commands_say_it_is_off() {
+        let mut rig = Rig::with_players();
+        rig.run(ALICE, "skin Bob Rex");
+        rig.set_config("enabled = false\n");
+        rig.tick();
+        assert_eq!(rig.host.textures[&BOB], own_skin("Bob"));
+        let off = "Skins are turned off (enabled = false in config/nick.toml): /nick reload reads it again";
+        assert_eq!(rig.answer(ALICE, "skin Rex"), refused("skin Rex", off));
+        assert_eq!(rig.answer(ALICE, "skin off"), refused("skin off", off));
     }
 }

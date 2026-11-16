@@ -13,7 +13,7 @@ use rift_chat::{count, escape, mini};
 /// level the config names.
 pub const ADMIN: &str = "nick.admin";
 
-const USAGES: [&str; 16] = [
+const USAGES: [&str; 22] = [
     "nick <name:word>",
     "nick <target:player> <name:word>",
     "nick off [targets:players]",
@@ -30,7 +30,15 @@ const USAGES: [&str; 16] = [
     "nickonjoin off",
     "nickonjoin on",
     "nickonjoin all",
+    "skin <account:word>",
+    "skin <target:player> <account:word>",
+    "skin off [targets:players]",
+    "skin off --admin",
+    "skin random [targets:players]",
+    "skin random --admin",
 ];
+
+const SKIN_USAGE: &str = "Usage: /skin <account> | <player> <account> | off [players|--admin] | random [players|--admin]";
 
 const USAGE: &str = "Usage: /nick <name> | <player> <name> | off [players|--admin] | random [players|--admin] | info <nickname> | list | pool add|remove|check [name] | reload";
 
@@ -70,8 +78,17 @@ pub enum Command {
     PoolCheck(Option<String>),
     /// `/nickonjoin`: the word typed after it, none to ask the setting.
     OnJoin(Option<String>),
+    /// `/skin <account>` or `/skin <player> <account>`: the skin of an account.
+    SkinSet {
+        target: Option<String>,
+        account: String,
+    },
+    SkinOff(Targets),
+    SkinRandom(Targets),
     /// Our command, said wrongly.
     Usage,
+    /// `/skin`, said wrongly.
+    SkinUsage,
 }
 
 fn targets(word: &str) -> Targets {
@@ -89,6 +106,9 @@ pub fn parse(line: &str) -> Option<Command> {
     let args: Vec<&str> = words.collect();
     if head.eq_ignore_ascii_case("nickonjoin") {
         return Some(Command::OnJoin((!args.is_empty()).then(|| args.join(" "))));
+    }
+    if head.eq_ignore_ascii_case("skin") {
+        return Some(parse_skin(&args));
     }
     if !head.eq_ignore_ascii_case("nick") {
         return None;
@@ -126,6 +146,27 @@ pub fn parse(line: &str) -> Option<Command> {
     })
 }
 
+/// The words after `/skin`. The words `off` and `random` are the command's own in the first place.
+fn parse_skin(args: &[&str]) -> Command {
+    let first = args.first().map(|w| w.to_ascii_lowercase());
+    match (first.as_deref(), args) {
+        (Some("off"), [_]) => Command::SkinOff(Targets::Own),
+        (Some("off"), [_, who]) => Command::SkinOff(targets(who)),
+        (Some("random"), [_]) => Command::SkinRandom(Targets::Own),
+        (Some("random"), [_, who]) => Command::SkinRandom(targets(who)),
+        (Some("off" | "random"), _) | (None, _) => Command::SkinUsage,
+        (_, [account]) => Command::SkinSet {
+            target: None,
+            account: (*account).to_owned(),
+        },
+        (_, [target, account]) => Command::SkinSet {
+            target: Some((*target).to_owned()),
+            account: (*account).to_owned(),
+        },
+        _ => Command::SkinUsage,
+    }
+}
+
 /// A line of markup (`rift_chat`) to whoever ran the command.
 fn say(host: &mut dyn Host, markup: &str) {
     host.feedback(mini(markup));
@@ -159,6 +200,19 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
     };
     // The players as they are now: the command runs where the server's list is in reach.
     state.roster.replace(&host.server_players());
+    let skin_command = matches!(
+        command,
+        Command::SkinSet { .. } | Command::SkinOff(_) | Command::SkinRandom(_) | Command::SkinUsage
+    );
+    if !state.config.enabled && skin_command {
+        refuse(
+            host,
+            line,
+            words(line),
+            "Skins are turned off (enabled = false in config/nick.toml): <accent><click:run_command:'/nick reload'>/nick reload</click></accent> reads it again",
+        );
+        return true;
+    }
     if !state.config.enabled && command != Command::Reload {
         refuse(
             host,
@@ -173,7 +227,13 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
             set(state, host, actor, line, target.as_deref(), &nickname);
         }
         Command::Off(who) => off(state, host, actor, line, &who),
-        Command::Random(who) => random(state, host, actor, line, &who),
+        Command::Random(who) => random(state, host, actor, line, &who, false),
+        Command::SkinSet { target, account } => {
+            skin_set(state, host, actor, line, target.as_deref(), &account);
+        }
+        Command::SkinOff(who) => skin_off(state, host, actor, line, &who),
+        Command::SkinRandom(who) => random(state, host, actor, line, &who, true),
+        Command::SkinUsage => refuse(host, line, words(line), &escape(SKIN_USAGE)),
         Command::Info(name) => info(state, host, line, &name),
         Command::List => list(state, host),
         Command::Reload => reload(state, host),
@@ -191,8 +251,8 @@ pub fn run(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str) ->
 /// The players a word names: a name or a nickname (a leading `~` is the name chat shows), `@s`,
 /// `@p`, `@r` or `@a`. The two selectors for many players, `@a` and `--admin`, skip operators or mean
 /// only them; `@s` and a name are the player whoever they are. Options in brackets are not read.
-/// The errors are markup. `verb` is the command (`off` or `random`) that `@a` points an operator's
-/// way to `--admin` with.
+/// The errors are markup. `verb` is the command (`nick off`, `skin random`...) that `@a` points an
+/// operator's way to `--admin` with.
 fn select(
     state: &mut State,
     actor: &Actor,
@@ -251,7 +311,7 @@ fn select(
             let all = ordinary(state);
             if all.is_empty() {
                 Err(format!(
-                    "No player was found: operators are skipped, use <accent><click:run_command:'/nick {verb} --admin'>/nick {verb} --admin</click></accent> to target them"
+                    "No player was found: operators are skipped, use <accent><click:run_command:'/{verb} --admin'>/{verb} --admin</click></accent> to target them"
                 ))
             } else {
                 Ok(all)
@@ -295,9 +355,14 @@ fn who(
     match targets {
         Targets::Own => match actor {
             Actor::Player { uuid, .. } => Ok(vec![*uuid]),
-            Actor::Console | Actor::Join => {
-                Err("The console has no nickname: name a player".to_owned())
-            }
+            Actor::Console | Actor::Join => Err(format!(
+                "The console has no {}: name a player",
+                if verb.starts_with("skin") {
+                    "skin"
+                } else {
+                    "nickname"
+                }
+            )),
         },
         Targets::Admin => {
             let ops: Vec<u128> = state
@@ -402,7 +467,7 @@ fn set(
 
 fn off(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, targets: &Targets) {
     let at = targets_at(line, targets);
-    match who(state, actor, targets, "off") {
+    match who(state, actor, targets, "nick off") {
         Ok(uuids) => off_players(state, host, actor, line, at, &uuids),
         Err(e) => refuse(host, line, at, &e),
     }
@@ -450,19 +515,28 @@ fn off_players(
     );
 }
 
-fn random(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, targets: &Targets) {
+fn random(
+    state: &mut State,
+    host: &mut dyn Host,
+    actor: &Actor,
+    line: &str,
+    targets: &Targets,
+    skin: bool,
+) {
     let at = targets_at(line, targets);
-    let uuids = match who(state, actor, targets, "random") {
+    let verb = if skin { "skin random" } else { "nick random" };
+    let uuids = match who(state, actor, targets, verb) {
         Ok(found) => found,
         Err(e) => return refuse(host, line, at, &e),
     };
     // Several at once are answered once, when all have theirs.
-    let batch = (uuids.len() > 1).then(|| state.new_batch(actor, uuids.len()));
+    let batch = (uuids.len() > 1).then(|| state.new_batch(actor, uuids.len(), skin));
     for uuid in &uuids {
         state.push(Job::Random {
             uuid: *uuid,
             actor: actor.clone(),
             batch,
+            skin,
         });
     }
     let for_whom = match uuids.as_slice() {
@@ -470,9 +544,89 @@ fn random(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, tar
         [uuid] => escape(&real_name(state, *uuid)),
         many => count(many.len(), "player"),
     };
+    let what = if skin { "skin" } else { "nickname" };
     say(
         host,
-        &format!("<gray>Choosing random nickname for {for_whom}...</gray>"),
+        &format!("<gray>Choosing random {what} for {for_whom}...</gray>"),
+    );
+}
+
+/// `/skin <account>` and `/skin <player> <account>`: the skin of an account for a player. The
+/// account is looked up in the background, so a failure is told when it comes.
+fn skin_set(
+    state: &mut State,
+    host: &mut dyn Host,
+    actor: &Actor,
+    line: &str,
+    target: Option<&str>,
+    account: &str,
+) {
+    let found = match target {
+        None => who(state, actor, &Targets::Own, "skin"),
+        Some(spec) => select(state, actor, spec, false, "skin"),
+    };
+    let uuid = match found {
+        Ok(found) => found[0],
+        Err(e) => {
+            let at = if target.is_some() { 2 } else { words(line) };
+            return refuse(host, line, at, &e);
+        }
+    };
+    // The account is the last word of the line.
+    let at = words(line);
+    if !names::is_account_name(account) {
+        return refuse(
+            host,
+            line,
+            at,
+            &format!("{} {NOT_AN_ACCOUNT}", accent(account)),
+        );
+    }
+    state.push(Job::SkinSet {
+        uuid,
+        account: account.to_owned(),
+        actor: actor.clone(),
+        line: line.to_owned(),
+        at,
+    });
+}
+
+fn skin_off(state: &mut State, host: &mut dyn Host, actor: &Actor, line: &str, targets: &Targets) {
+    let at = targets_at(line, targets);
+    let uuids = match who(state, actor, targets, "skin off") {
+        Ok(found) => found,
+        Err(e) => return refuse(host, line, at, &e),
+    };
+    // One player without a skin is an error; in a crowd the ones without are left alone, and only
+    // a crowd without any is.
+    let skinned: Vec<u128> = uuids
+        .iter()
+        .copied()
+        .filter(|uuid| state.has_skin(*uuid) || state.skin_pending(*uuid))
+        .collect();
+    if skinned.is_empty() {
+        let said = match uuids.as_slice() {
+            [uuid] if is_self(actor, *uuid) => "You do not have a skin set".to_owned(),
+            [uuid] => format!(
+                "{} does not have a skin set",
+                accent(&real_name(state, *uuid))
+            ),
+            _ => "None of them has a skin set".to_owned(),
+        };
+        return refuse(host, line, at, &said);
+    }
+    for uuid in &skinned {
+        state.push(Job::SkinOff {
+            uuid: *uuid,
+            actor: actor.clone(),
+        });
+    }
+    say(
+        host,
+        &format!(
+            "<white>Removed skins from {}!</white>",
+            accent(&count(skinned.len(), "player"))
+        ),
     );
 }
 
@@ -551,10 +705,22 @@ fn info(state: &mut State, host: &mut dyn Host, line: &str, name: &str) {
             say(host, &how);
         }
         None => match state.roster.by_name(name) {
-            Some(m) => say(
-                host,
-                &format!("<gray>{} is not nicknamed</gray>", accent(&m.name)),
-            ),
+            Some(m) => {
+                say(
+                    host,
+                    &format!("<gray>{} is not nicknamed</gray>", accent(&m.name)),
+                );
+                if let Some(worn) = state.worn.get(&m.uuid) {
+                    say(
+                        host,
+                        &format!(
+                            "<gray>Skin set by {}: the skin of {}</gray>",
+                            escape(&worn.by),
+                            accent(&worn.account)
+                        ),
+                    );
+                }
+            }
             None => refuse(
                 host,
                 line,
@@ -888,6 +1054,56 @@ mod tests {
     }
 
     #[test]
+    fn skin_takes_an_account_for_oneself_or_a_player_and_the_words_off_and_random() {
+        assert_eq!(
+            parse("skin Dream"),
+            Some(Command::SkinSet {
+                target: None,
+                account: "Dream".into()
+            })
+        );
+        assert_eq!(
+            parse("/SKIN  Bob Dream"),
+            Some(Command::SkinSet {
+                target: Some("Bob".into()),
+                account: "Dream".into()
+            })
+        );
+        assert_eq!(parse("skin off"), Some(Command::SkinOff(Targets::Own)));
+        assert_eq!(
+            parse("skin off @a"),
+            Some(Command::SkinOff(Targets::Spec("@a".into())))
+        );
+        assert_eq!(
+            parse("skin OFF --admin"),
+            Some(Command::SkinOff(Targets::Admin))
+        );
+        assert_eq!(
+            parse("skin random"),
+            Some(Command::SkinRandom(Targets::Own))
+        );
+        assert_eq!(
+            parse("skin random Bob"),
+            Some(Command::SkinRandom(Targets::Spec("Bob".into())))
+        );
+        assert_eq!(
+            parse("skin random --admin"),
+            Some(Command::SkinRandom(Targets::Admin))
+        );
+        // After a player's name the words are an account like any other.
+        assert_eq!(
+            parse("skin Bob off"),
+            Some(Command::SkinSet {
+                target: Some("Bob".into()),
+                account: "off".into()
+            })
+        );
+        for line in ["skin", "skin off a b", "skin random a b", "skin a b c"] {
+            assert_eq!(parse(line), Some(Command::SkinUsage), "{line}");
+        }
+    }
+
+    #[test]
     fn a_line_said_wrongly_gets_the_usage() {
         for line in [
             "nick",
@@ -911,12 +1127,12 @@ mod tests {
     fn the_command_is_registered_for_operators_of_the_level_and_the_admin_permission() {
         let mut commands = Vec::new();
         register(&mut commands, 3);
-        assert_eq!(commands.len(), 16);
+        assert_eq!(commands.len(), 22);
         for command in &commands {
             assert_eq!(command.level, 3);
             assert_eq!(command.permission.as_deref(), Some("nick.admin"));
             assert!(!command.replace_vanilla);
-            assert!(command.usage.starts_with("nick"));
+            assert!(command.usage.starts_with("nick") || command.usage.starts_with("skin"));
         }
         let usages: Vec<&str> = commands.iter().map(|c| c.usage.as_str()).collect();
         // Players are picked by the client's own selector argument.
@@ -924,5 +1140,10 @@ mod tests {
         assert!(usages.contains(&"nick off [targets:players]"));
         assert!(usages.contains(&"nick random [targets:players]"));
         assert!(usages.contains(&"nick off --admin") && usages.contains(&"nick random --admin"));
+        assert!(usages.contains(&"skin <account:word>"));
+        assert!(usages.contains(&"skin <target:player> <account:word>"));
+        assert!(usages.contains(&"skin off [targets:players]"));
+        assert!(usages.contains(&"skin random [targets:players]"));
+        assert!(usages.contains(&"skin off --admin") && usages.contains(&"skin random --admin"));
     }
 }
