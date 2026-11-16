@@ -30,11 +30,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: cargo build --release --locked -p rift-engine -p horizon-server --bin horizon-server
+        # Two commands, as the Dockerfile has them: with --bin on one command, Cargo builds only the
+        # programs of that name, and rift-engine is left out.
+        run: |
+          cargo build --release --locked -p rift-engine
+          cargo build --release --locked -p horizon-server --bin horizon-server
 
       - name: Package
         run: |
           set -eu
+          ls -l target/release/rift-engine target/release/horizon-server
           mkdir -p pkg/rift
           cp target/release/horizon-server pkg/rift/rift-server
           cp target/release/rift-engine pkg/rift/rift-engine
