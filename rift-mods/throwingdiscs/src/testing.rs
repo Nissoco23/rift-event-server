@@ -16,9 +16,9 @@ use horizon_client::mod_api::{
     NativeLifecycleContext, NativeServerPlayer, NativeWorldEpoch, ParticleOptions, ServerTickPhase,
     Tag, Text, dispatch_anvil_update, dispatch_data_pack_files, dispatch_level_tick_post,
     dispatch_living_death, dispatch_perform_command, dispatch_perform_console_command,
-    dispatch_player_logged_in, dispatch_player_logged_out, dispatch_player_respawned,
-    dispatch_prepare_item_craft_v2, dispatch_prepare_smithing_v2, dispatch_server_stopping,
-    dispatch_server_tick, dispatch_use_item, parse_snbt,
+    dispatch_player_command, dispatch_player_logged_in, dispatch_player_logged_out,
+    dispatch_player_respawned, dispatch_prepare_item_craft_v2, dispatch_prepare_smithing_v2,
+    dispatch_server_stopping, dispatch_server_tick, dispatch_use_item, parse_snbt,
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -55,7 +55,6 @@ pub struct FakeHost {
     pub unloaded: HashSet<(i32, i32)>,
     pub keep_inventory: bool,
     pub acting: Option<u128>,
-    pub permitted: bool,
     /// Every hurt, in order: target, amount, damage type, attacker.
     pub hurts: Vec<(u32, f32, String, Option<u32>)>,
     pub player_velocities: Vec<(u128, V3)>,
@@ -236,10 +235,6 @@ impl Host for FakeHost {
             }
             None => Some(stack),
         }
-    }
-
-    fn has_permission(&self, _player: u128, _node: &str, _default_level: u8) -> bool {
-        self.permitted
     }
 
     fn summon(
@@ -581,7 +576,6 @@ impl Rig {
                 unloaded: HashSet::new(),
                 keep_inventory: false,
                 acting: None,
-                permitted: true,
                 hurts: Vec::new(),
                 player_velocities: Vec::new(),
                 summoned: Vec::new(),
@@ -604,7 +598,7 @@ impl Rig {
         };
         // Bob stands at the origin facing south (+z), with the first hotbar slot held; Alice is an
         // operator elsewhere.
-        rig.join("Bob", BOB, 0, 1, [0.0, 64.0, 0.0]);
+        rig.join("Bob", BOB, 2, 1, [0.0, 64.0, 0.0]);
         rig.join("Alice", ALICE, 4, 2, [100.0, 64.0, 100.0]);
         rig
     }
@@ -684,10 +678,26 @@ impl Rig {
         self.use_item(uuid, &held)
     }
 
-    /// A player types a command: whether the mod took it.
+    /// A player types a command, as the engine runs it: the hook that hears every command first, then
+    /// the registered ones. Whether the mod took it; what it answered is in `host.feedback`.
     pub fn say(&mut self, uuid: u128, line: &str) -> bool {
         let player = self.host.player(uuid).clone();
         self.host.feedback.clear();
+        let mut replies = Vec::new();
+        let mut canceled = false;
+        dispatch_player_command(
+            &mut self.host,
+            &self.mods,
+            uuid,
+            &player.name,
+            line,
+            &mut replies,
+            &mut canceled,
+        );
+        self.host.feedback.extend(replies.iter().map(|t| t.plain()));
+        if canceled {
+            return true;
+        }
         let mut ran = false;
         dispatch_perform_command(&mut self.host, &self.mods, &player, line, &mut ran);
         ran
@@ -731,16 +741,18 @@ impl Rig {
         files
     }
 
-    /// What an anvil answers for `left` and `right`: the result and its level cost, or None for no
-    /// result; `None` inside is vanilla's.
+    /// What the anvil shows for `left` and `right`, as the engine applies the mods' answer to
+    /// `vanilla`'s result: a cancelled update leaves no result, otherwise the output and level cost
+    /// the mods left (vanilla's cost here is 1).
     pub fn anvil(
         &mut self,
         left: &ItemStack,
         right: Option<&ItemStack>,
         name: Option<&str>,
-    ) -> Option<(Option<ItemStack>, i32)> {
-        let mut output = None;
-        let (mut xp, mut material, mut canceled) = (0, 0, false);
+        vanilla: Option<ItemStack>,
+    ) -> (Option<ItemStack>, i32) {
+        let mut output = vanilla.clone();
+        let (mut xp, mut material, mut canceled) = (1, 1, false);
         dispatch_anvil_update(
             &mut self.host,
             &self.mods,
@@ -749,15 +761,15 @@ impl Rig {
             left,
             right,
             name,
-            None,
-            0,
-            0,
+            vanilla.as_ref(),
+            1,
+            1,
             &mut output,
             &mut xp,
             &mut material,
             &mut canceled,
         );
-        canceled.then_some((output, xp))
+        if canceled { (None, 0) } else { (output, xp) }
     }
 
     /// What the smithing table shows: the result vanilla made, as the mods leave it.
@@ -1516,37 +1528,70 @@ mod scenarios {
         let mut rig = Rig::new();
         let disc = rig.disc(Tier::Iron);
         hold(&mut rig, disc);
+        // The hook that hears the command reads the players as the last tick saw them.
+        rig.tick();
         assert!(rig.say(BOB, "enchant Bob sharpness 3"));
         assert_eq!(
             rig.host.feedback,
             ["Applied enchantment Sharpness III to Bob's item!"]
         );
         rig.tick();
-        assert_eq!(
-            rig.host
-                .slot(BOB, 0)
-                .unwrap()
-                .enchantment_level("minecraft:sharpness"),
-            3
-        );
+        let level = |rig: &Rig, who, id| rig.host.slot(who, 0).unwrap().enchantment_level(id);
+        assert_eq!(level(&rig, BOB, "minecraft:sharpness"), 3);
         assert!(rig.say(BOB, "/minecraft:enchant @s minecraft:sharpness 1"));
         rig.tick();
+        assert_eq!(level(&rig, BOB, "minecraft:sharpness"), 1);
+        assert!(rig.say(BOB, "enchant @p mending"));
+        rig.tick();
+        assert_eq!(level(&rig, BOB, "minecraft:mending"), 1);
+    }
+
+    #[test]
+    fn enchant_reaches_another_player_who_holds_a_disc_and_at_a_takes_all_or_none() {
+        let mut rig = Rig::new();
+        let (bobs, alices) = (rig.disc(Tier::Iron), rig.disc(Tier::Diamond));
+        hold(&mut rig, bobs);
+        rig.host.set_slot(ALICE, 0, Some(alices));
+        rig.tick();
+        assert!(rig.say(BOB, "enchant Alice sharpness 5"));
+        assert_eq!(
+            rig.host.feedback,
+            ["Applied enchantment Sharpness V to Alice's item!"]
+        );
+        rig.tick();
         assert_eq!(
             rig.host
-                .slot(BOB, 0)
+                .slot(ALICE, 0)
                 .unwrap()
                 .enchantment_level("minecraft:sharpness"),
-            1
+            5
         );
-        assert!(rig.say(BOB, "enchant @p mending"));
+        assert!(!rig.host.slot(BOB, 0).unwrap().has_any_enchantments());
+        // Everyone holds a disc: all of them.
+        assert!(rig.say(BOB, "enchant @a unbreaking 2"));
+        assert_eq!(
+            rig.host.feedback,
+            ["Applied enchantment Unbreaking II to 2 items!"]
+        );
         rig.tick();
         assert_eq!(
             rig.host
                 .slot(BOB, 0)
                 .unwrap()
-                .enchantment_level("minecraft:mending"),
-            1
+                .enchantment_level("minecraft:unbreaking"),
+            2
         );
+        assert_eq!(
+            rig.host
+                .slot(ALICE, 0)
+                .unwrap()
+                .enchantment_level("minecraft:unbreaking"),
+            2
+        );
+        // Alice puts hers away: not every target holds a disc any more, so vanilla runs the line.
+        rig.host.set_slot(ALICE, 0, None);
+        rig.tick();
+        assert!(!rig.say(BOB, "enchant @a unbreaking 3"));
     }
 
     #[test]
@@ -1554,6 +1599,7 @@ mod scenarios {
         let mut rig = Rig::new();
         let disc = rig.disc(Tier::Iron);
         hold(&mut rig, disc);
+        rig.tick();
         assert!(rig.say(BOB, "enchant Bob fire_aspect 1"));
         assert_eq!(
             rig.host.feedback[0],
@@ -1567,13 +1613,15 @@ mod scenarios {
         rig.tick();
         assert!(!rig.host.slot(BOB, 0).unwrap().has_any_enchantments());
 
-        // Not a disc in the hand, a selector this does not read, or no permission: vanilla's.
-        hold(&mut rig, ItemStack::new("minecraft:iron_sword", 1));
-        assert!(!rig.say(BOB, "enchant Bob sharpness 3"));
-        let disc = rig.disc(Tier::Iron);
-        hold(&mut rig, disc);
+        // A selector this does not read, or a player who may not run /enchant: vanilla's.
         assert!(!rig.say(BOB, "enchant @e[type=zombie] sharpness 3"));
-        rig.host.permitted = false;
+        rig.host.player_mut(BOB).permission = 0;
+        rig.tick();
+        assert!(!rig.say(BOB, "enchant Bob sharpness 3"));
+        // Not a disc in the hand: vanilla's.
+        rig.host.player_mut(BOB).permission = 2;
+        hold(&mut rig, ItemStack::new("minecraft:iron_sword", 1));
+        rig.tick();
         assert!(!rig.say(BOB, "enchant Bob sharpness 3"));
     }
 
@@ -1678,19 +1726,48 @@ mod scenarios {
     }
 
     #[test]
-    fn the_anvil_takes_books_and_matching_discs_through_the_hook() {
+    fn the_anvil_shows_a_disc_with_a_books_enchantments_and_its_cost() {
+        let mut rig = Rig::new();
+        let left = rig.disc(Tier::Iron);
+        let mut book = ItemStack::new("minecraft:enchanted_book", 1);
+        book.set_crafting_enchantments(vec![(Shared::from("minecraft:sharpness"), 3)]);
+        // Vanilla finds nothing to do with a book on an echo shard: no result of its own.
+        let (result, cost) = rig.anvil(&left, Some(&book), None, None);
+        let result = result.expect("the anvil shows the disc with Sharpness III");
+        assert_eq!(item::tier_of(&result), Some(Tier::Iron));
+        assert_eq!(result.enchantment_level("minecraft:sharpness"), 3);
+        assert_eq!(cost, 6, "three levels at two each");
+    }
+
+    #[test]
+    fn the_anvil_leaves_vanillas_result_alone_and_blocks_a_disc_as_a_material() {
         let mut rig = Rig::new();
         let left = rig.disc(Tier::Iron);
         let mut book = ItemStack::new("minecraft:enchanted_book", 1);
         book.set_crafting_enchantments(vec![(Shared::from("minecraft:knockback"), 2)]);
-        let (result, cost) = rig
-            .anvil(&left, Some(&book), None)
-            .expect("the mod answers");
-        assert_eq!(result.unwrap().enchantment_level("minecraft:knockback"), 2);
-        assert_eq!(cost, 4);
-        // A sword with a book is vanilla's; a disc as the material of a sword is nobody's.
+        // A sword with a book is vanilla's.
         let sword = ItemStack::new("minecraft:iron_sword", 1);
-        assert_eq!(rig.anvil(&sword, Some(&book), None), None);
-        assert_eq!(rig.anvil(&sword, Some(&left), None), Some((None, 0)));
+        let enchanted = ItemStack::new("minecraft:diamond_sword", 1);
+        assert_eq!(
+            rig.anvil(&sword, Some(&book), None, Some(enchanted.clone())),
+            (Some(enchanted), 1)
+        );
+        // A disc as the second item of a sword is nobody's: no result.
+        assert_eq!(
+            rig.anvil(
+                &sword,
+                Some(&left),
+                None,
+                Some(ItemStack::new("minecraft:diamond_sword", 1))
+            ),
+            (None, 0)
+        );
+        // The disc's own ingot is vanilla's repair.
+        let ingot = ItemStack::new("minecraft:iron_ingot", 1);
+        let repaired = Some(left.clone());
+        assert_eq!(
+            rig.anvil(&left, Some(&ingot), None, repaired.clone()),
+            (repaired, 1)
+        );
     }
 }

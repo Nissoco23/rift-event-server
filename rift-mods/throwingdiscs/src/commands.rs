@@ -5,8 +5,8 @@
 
 use crate::config::Config;
 use crate::item::{self, Tier};
-use crate::state::Task;
-use horizon_client::mod_api::{Host, NativeCommand, NativeServerPlayer, Suggestion};
+use crate::state::{Member, Task};
+use horizon_client::mod_api::{Host, NativeCommand, NativeServerPlayer, Suggestion, Text};
 use rift_chat::{count, escape, mini};
 
 /// The permission node a permissions mod can grant, which operators of the level below have
@@ -198,19 +198,19 @@ pub fn completions(before: &[&str], typing: &str, range: (usize, usize)) -> Vec<
 pub enum Enchant {
     /// Vanilla runs it: not about discs, or something this does not read.
     Vanilla,
-    /// Answered here; the tasks do the enchanting at the next tick.
-    Handled(Vec<Task>),
+    /// Answered here: the lines for the player, and the work for the next level tick.
+    Handled {
+        replies: Vec<Text>,
+        tasks: Vec<Task>,
+    },
 }
 
 /// Makes vanilla's `/enchant` work on discs, which vanilla refuses because echo shards are in no
-/// enchantment's item list. It takes the line when every target is a player named, `@s`, `@p` or
-/// `@a` holding a disc in the main hand; any other line runs in vanilla.
-pub fn enchant(
-    host: &mut dyn Host,
-    player: &NativeServerPlayer,
-    line: &str,
-    players: &[NativeServerPlayer],
-) -> Enchant {
+/// enchantment's item list. The hook that hears every command runs where the server's players are out
+/// of reach, so this reads the players as the last level tick saw them. It takes the line when the
+/// sender is an operator of level 2 and every target is a player named, `@s`, `@p` or `@a` holding a
+/// disc in the main hand; any other line runs in vanilla.
+pub fn enchant(sender: u128, line: &str, roster: &[Member]) -> Enchant {
     let words: Vec<&str> = line
         .trim()
         .trim_start_matches('/')
@@ -220,31 +220,36 @@ pub fn enchant(
         || !(words[0].eq_ignore_ascii_case("enchant")
             || words[0].eq_ignore_ascii_case("minecraft:enchant"))
         || line.contains('[')
-        || !host.has_permission(player.uuid, "minecraft.command.enchant", 2)
     {
         return Enchant::Vanilla;
     }
-    let Some(targets) = resolve(player, words[1], players) else {
+    let Some(me) = roster.iter().find(|m| m.player.uuid == sender) else {
         return Enchant::Vanilla;
     };
-    let holds_disc =
-        |host: &dyn Host, uuid| host.held_stack(uuid).is_some_and(|s| item::is_disc(&s));
-    if targets.is_empty() || !targets.iter().all(|p| holds_disc(&*host, p.uuid)) {
+    if me.player.permission < 2 {
+        return Enchant::Vanilla;
+    }
+    let Some(targets) = resolve(&me.player, words[1], roster) else {
+        return Enchant::Vanilla;
+    };
+    if targets.is_empty() || !targets.iter().all(|m| m.holds_disc) {
         return Enchant::Vanilla;
     }
 
+    let fail = |at: usize, why: &str| {
+        let [header, context] = rift_chat::error(line, at, why);
+        Enchant::Handled {
+            replies: vec![header, context],
+            tasks: Vec::new(),
+        }
+    };
     let id = if words[2].contains(':') {
         words[2].to_ascii_lowercase()
     } else {
         format!("minecraft:{}", words[2].to_ascii_lowercase())
     };
-    let refuse_here = |host: &mut dyn Host, at: usize, why: &str| {
-        refuse(host, line, at, why);
-        Enchant::Handled(Vec::new())
-    };
     let Some(max) = item::allowed_level(&id) else {
-        return refuse_here(
-            host,
+        return fail(
             3,
             &format!(
                 "Throwing discs can't have <accent>{}</accent>",
@@ -256,12 +261,11 @@ pub fn enchant(
         None => 1,
         Some(text) => match text.parse::<u32>() {
             Ok(n) if n >= 1 => n,
-            _ => return refuse_here(host, 4, "The level must be a whole number of at least 1"),
+            _ => return fail(4, "The level must be a whole number of at least 1"),
         },
     };
     if level > max {
-        return refuse_here(
-            host,
+        return fail(
             words.len(),
             &format!(
                 "<accent>{}</accent> on a throwing disc goes up to level <accent>{max}</accent>",
@@ -272,53 +276,56 @@ pub fn enchant(
 
     let tasks = targets
         .iter()
-        .map(|p| Task::Enchant {
-            uuid: p.uuid,
+        .map(|m| Task::Enchant {
+            uuid: m.player.uuid,
             enchantment: id.clone(),
             level,
         })
         .collect();
     let target = match targets.as_slice() {
-        [one] => format!("{}'s item", escape(&one.name)),
+        [one] => format!("{}'s item", escape(&one.player.name)),
         many => format!("{} items", many.len()),
     };
-    say(
-        host,
-        &format!(
-            "<white>Applied enchantment <accent>{} {}</accent> to <accent>{target}</accent>!</white>",
-            escape(&plain_name(&id)),
-            roman(level)
-        ),
-    );
-    Enchant::Handled(tasks)
+    let done = mini(&format!(
+        "<white>Applied enchantment <accent>{} {}</accent> to <accent>{target}</accent>!</white>",
+        escape(&plain_name(&id)),
+        roman(level)
+    ));
+    Enchant::Handled {
+        replies: vec![done],
+        tasks,
+    }
 }
 
 /// The players a word names: a name, `@s`, `@p` (the nearest) or `@a`. None for anything else.
 fn resolve<'a>(
     me: &'a NativeServerPlayer,
     word: &str,
-    players: &'a [NativeServerPlayer],
-) -> Option<Vec<&'a NativeServerPlayer>> {
+    roster: &'a [Member],
+) -> Option<Vec<&'a Member>> {
     match word.to_ascii_lowercase().as_str() {
-        "@s" => Some(vec![me]),
-        "@a" => Some(players.iter().collect()),
-        "@p" => players
+        "@s" => roster
             .iter()
-            .filter(|p| p.dimension == me.dimension)
+            .find(|m| m.player.uuid == me.uuid)
+            .map(|m| vec![m]),
+        "@a" => Some(roster.iter().collect()),
+        "@p" => roster
+            .iter()
+            .filter(|m| m.player.dimension == me.dimension)
             .min_by(|a, b| {
-                let d = |p: &NativeServerPlayer| {
+                let d = |m: &Member| {
                     (0..3)
-                        .map(|i| (p.position[i] - me.position[i]).powi(2))
+                        .map(|i| (m.player.position[i] - me.position[i]).powi(2))
                         .sum::<f64>()
                 };
                 d(a).total_cmp(&d(b))
             })
-            .map(|p| vec![p]),
+            .map(|m| vec![m]),
         w if w.starts_with('@') => None,
-        _ => players
+        _ => roster
             .iter()
-            .find(|p| p.name.eq_ignore_ascii_case(word))
-            .map(|p| vec![p]),
+            .find(|m| m.player.name.eq_ignore_ascii_case(word))
+            .map(|m| vec![m]),
     }
 }
 

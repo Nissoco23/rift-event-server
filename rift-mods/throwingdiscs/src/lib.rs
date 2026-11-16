@@ -26,12 +26,13 @@ use flight::{Around, Disc, Step};
 use horizon_client::mod_api::{
     AnvilUpdateEvent, DataPackFilesEvent, EquipmentSlot, Flow, GameRuleValue, Hand, Hooks, Host,
     ItemStack, LevelTickPostEvent, LivingDeathEvent, NativeInventoryKind, NativeServerPlayer,
-    PerformCommandEvent, PerformConsoleCommandEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
-    PlayerRespawnedEvent, PrepareItemCraftV2Event, PrepareSmithingV2Event, RegisterCommandsEvent,
-    ServerStoppingEvent, ServerTickEvent, ServerTickPhase, TabCompleteV2Event, UseItemEvent,
+    PerformCommandEvent, PerformConsoleCommandEvent, PlayerCommandEvent, PlayerLoggedInEvent,
+    PlayerLoggedOutEvent, PlayerRespawnedEvent, PrepareItemCraftV2Event, PrepareSmithingV2Event,
+    RegisterCommandsEvent, ServerStoppingEvent, ServerTickEvent, ServerTickPhase,
+    TabCompleteV2Event, UseItemEvent,
 };
 use rng::Rng;
-use state::{Shared, Task};
+use state::{Member, Shared, Task};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -109,6 +110,16 @@ impl ThrowingDiscs {
                 ))
             })
             .collect();
+
+        // The players as this tick sees them, for the hooks that cannot reach the server's players.
+        let roster: Vec<Member> = players
+            .iter()
+            .map(|p| Member {
+                player: p.clone(),
+                holds_disc: host.held_stack(p.uuid).is_some_and(|s| item::is_disc(&s)),
+            })
+            .collect();
+        self.shared.state().roster = roster;
 
         // A crash can leave a flight's display behind: remove them once per level.
         if self.shared.state().cleaned.insert(dimension.to_owned()) {
@@ -365,13 +376,20 @@ impl Hooks for ThrowingDiscs {
 
     fn perform_command(&self, host: &mut dyn Host, event: &mut PerformCommandEvent<'_>) -> Flow {
         self.ensure_config(&*host);
-        if let Flow::Cancel = self.discs_command(host, event.command) {
-            return Flow::Cancel;
-        }
-        let players = host.server_players();
-        match commands::enchant(host, event.player, event.command, &players) {
+        self.discs_command(host, event.command)
+    }
+
+    /// Vanilla's `/enchant` on a held disc. This is the hook that hears every command: the registered
+    /// ones only reach `perform_command`, and `/enchant` is vanilla's.
+    fn player_command(&self, _host: &mut dyn Host, event: &mut PlayerCommandEvent<'_>) -> Flow {
+        let outcome = {
+            let state = self.shared.state();
+            commands::enchant(event.player, event.command, &state.roster)
+        };
+        match outcome {
             commands::Enchant::Vanilla => Flow::Continue,
-            commands::Enchant::Handled(tasks) => {
+            commands::Enchant::Handled { replies, tasks } => {
+                event.replies.extend(replies);
                 self.shared.state().tasks.extend(tasks);
                 Flow::Cancel
             }
@@ -485,11 +503,12 @@ impl Hooks for ThrowingDiscs {
                 event.material_cost = 0;
                 Flow::Cancel
             }
+            // A result is set, not cancelled: cancelling leaves the anvil with no result at all.
             anvil::Outcome::Result(stack, cost) => {
                 *event.output = Some(*stack);
                 event.xp_cost = cost;
                 event.material_cost = 1;
-                Flow::Cancel
+                Flow::Continue
             }
         }
     }

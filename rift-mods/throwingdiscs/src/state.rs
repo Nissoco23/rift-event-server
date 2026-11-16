@@ -4,7 +4,7 @@
 use crate::config::Config;
 use crate::flight::Disc;
 use crate::rng::Rng;
-use horizon_client::mod_api::{Hand, ItemStack};
+use horizon_client::mod_api::{Hand, ItemStack, NativeServerPlayer};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
@@ -22,8 +22,18 @@ pub enum Task {
     },
 }
 
+/// A player as the last level tick saw them, for the hooks that run where the server's players are out
+/// of reach (`player_command`).
+#[derive(Clone, Debug)]
+pub struct Member {
+    pub player: NativeServerPlayer,
+    /// Whether the main hand holds a disc.
+    pub holds_disc: bool,
+}
+
 pub struct State {
     pub flying: Vec<Disc>,
+    pub roster: Vec<Member>,
     pub tasks: VecDeque<Task>,
     /// The server tick each player last threw in: a player throws at most one disc a tick.
     pub last_throw: HashMap<u128, u64>,
@@ -46,6 +56,7 @@ impl Shared {
         Self {
             state: Mutex::new(State {
                 flying: Vec::new(),
+                roster: Vec::new(),
                 tasks: VecDeque::new(),
                 last_throw: HashMap::new(),
                 tick: 0,

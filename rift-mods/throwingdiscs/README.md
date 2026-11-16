@@ -52,7 +52,7 @@ For operators of level 2, or whoever a permissions mod grants `throwingdiscs.adm
 | --- | --- |
 | `/discs give <player> <copper\|iron\|golden\|diamond\|netherite\|all> [amount]` | Gives discs; what does not fit drops at the player's feet. |
 | `/discs reload` | Reads `config/throwingdiscs.toml` again. Discs that exist keep their old durability and lore, and recipes change on `/reload`. |
-| `/enchant <player> <enchantment> [level]` | Vanilla's command, also on a disc held in the main hand, for the four enchantments above. It takes a player's name, `@s`, `@p` or `@a`; with a target that holds no disc, or any other selector, vanilla runs it. Running it again sets the new level. |
+| `/enchant <player> <enchantment> [level]` | Vanilla's command, also on a disc held in the main hand, for the four enchantments above; for operators of level 2. It takes a player's name, `@s`, `@p` or `@a`; with a target that holds no disc, or any other selector, vanilla runs it. The mod reads who holds a disc as of the last tick. Running it again sets the new level. |
 
 ## Configuration
 
