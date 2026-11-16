@@ -219,6 +219,16 @@ impl Game<'_> {
                 let (uuid, name) = (guest.uuid, guest.name.clone());
                 let mut result = gs.menu.slot(3).cloned();
                 self.native_prepare_smithing(uuid, &name, gs.pos, &mut result);
+                let inputs = [0, 1, 2].map(|k| gs.menu.slot(k).cloned());
+                self.native_prepare_smithing_v2(
+                    uuid,
+                    &name,
+                    gs.pos,
+                    inputs[0].as_ref(),
+                    inputs[1].as_ref(),
+                    inputs[2].as_ref(),
+                    &mut result,
+                );
                 let env = self.menu_env();
                 gs.menu.set_slot(&env, 3, result);
             }

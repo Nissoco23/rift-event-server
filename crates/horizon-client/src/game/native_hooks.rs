@@ -6222,6 +6222,55 @@ impl Game<'_> {
     ) {
         mod_api::dispatch_prepare_item_craft(self, mod_api::mods(), player, name, pos, result);
     }
+    /// A smithing result was prepared for a server player at `pos`, with the table's `template`, `base`
+    /// and `addition`. Unlike `native_prepare_smithing`, which only hears a table with no result, this
+    /// hears a result vanilla made too, and a mod may replace it or clear it (`None`). API
+    /// @API:prepare_craft_v2@.
+    pub(super) fn native_prepare_smithing_v2(
+        &mut self,
+        player: u128,
+        name: &str,
+        pos: [i32; 3],
+        template: Option<&ItemStack>,
+        base: Option<&ItemStack>,
+        addition: Option<&ItemStack>,
+        result: &mut Option<ItemStack>,
+    ) {
+        mod_api::dispatch_prepare_smithing_v2(
+            self,
+            mod_api::mods(),
+            player,
+            name,
+            pos,
+            template,
+            base,
+            addition,
+            result,
+        );
+    }
+    /// A crafting-grid result was prepared for a server player, with the `grid`'s slots (4 for the
+    /// inventory's, 9 for a crafting table's, row by row); `pos` is the table, or None for the inventory
+    /// grid. Unlike `native_prepare_item_craft`, which only hears a grid with no result, this hears a
+    /// result vanilla made too, and a mod may replace it or clear it (`None`). API
+    /// @API:prepare_craft_v2@.
+    pub(super) fn native_prepare_item_craft_v2(
+        &mut self,
+        player: u128,
+        name: &str,
+        pos: Option<[i32; 3]>,
+        grid: &[Option<ItemStack>],
+        result: &mut Option<ItemStack>,
+    ) {
+        mod_api::dispatch_prepare_item_craft_v2(
+            self,
+            mod_api::mods(),
+            player,
+            name,
+            pos,
+            grid,
+            result,
+        );
+    }
     /// A server player selected trade `index` from `villager` in the trading menu. 302.
     pub(super) fn native_trade_select(
         &mut self,
