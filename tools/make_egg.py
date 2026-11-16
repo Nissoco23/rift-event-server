@@ -32,7 +32,8 @@ def egg():
         "meta": {"version": "PTDL_v2", "update_url": None},
         "exported_at": "2026-11-15T00:00:00+00:00",
         "name": "Rift Event Server",
-        "author": "Nissoco",
+        # The panel validates the author as an email address and fails the import (a 500) when it is not one.
+        "author": "rift-event-server@example.com",
         "description": (
             "Rift Event Server: a Minecraft 26.3 server written in Rust. Installs the Linux x86-64 build from "
             "the GitHub release named by RIFT_VERSION. The prepared game files (made from your own Minecraft "
