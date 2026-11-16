@@ -3718,6 +3718,7 @@ dependencies = [
  "horizon-threads",
  "nick",
  "sculkstorm",
+ "throwingdiscs",
  "viewdistance",
 ]
 
@@ -4354,6 +4355,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "throwingdiscs"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

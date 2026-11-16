@@ -64,5 +64,7 @@ markup.
   operators.
 - [Nick](../rift-mods/nick/README.md): operator nicknames with another account's skin, `/skin` for the skin alone, and a pool
   of names for random ones.
+- [ThrowingDiscs](../rift-mods/throwingdiscs/README.md): the throwing disc weapon in five tiers, thrown with a
+  right-click, with its recipes, enchanting and `/discs`.
 - [Essentials](../rift-mods/essentials/README.md): `/gmc`, `/gms`, `/gmsp`, `/gma` for the game mode and
   `/flyspeed` for the flying speed, for operators.

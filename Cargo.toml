@@ -51,6 +51,7 @@ members = [
     "rift-mods/sculkstorm",
     "rift-mods/viewdistance",
     "rift-mods/essentials",
+    "rift-mods/throwingdiscs",
     "xtask",
 ]
 resolver = "2"

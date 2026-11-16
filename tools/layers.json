@@ -47,6 +47,7 @@
     "sculkstorm": "platform",
     "viewdistance": "platform",
     "essentials": "platform",
+    "throwingdiscs": "platform",
 
     "horizon-addresses": "horizon",
     "horizon-bench": "horizon",
