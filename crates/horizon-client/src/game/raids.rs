@@ -1648,6 +1648,7 @@ mod entity_ticking_tests {
         // A player in chunk (0, 0) with a simulation distance of 5: chunk
         // (6, 0) is loaded but its entities do not tick.
         game.tickets.update(Some(Sources {
+            limited: Vec::new(),
             players: vec![(0, 0)],
             view_distance: 10,
             simulation_distance: 5,

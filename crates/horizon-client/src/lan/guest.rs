@@ -122,7 +122,8 @@ pub struct Guest {
     /// The chunk radius this client is sent.
     pub view_distance: i32,
     /// A native mod's limit on `view_distance` for this player alone
-    /// (`native_set_player_view_distance`); None: the server's.
+    /// (`native_set_player_view_distance`); None: the server's. It also sets how far the server
+    /// keeps this player's chunks loaded and simulated (under the server's view distance).
     pub view_limit: Option<i32>,
     /// A fake player (a mod's bot with no client; `native_set_player_fake`): it keeps only a small
     /// area loaded and ticking around it and does not count for natural spawning, so hundreds of

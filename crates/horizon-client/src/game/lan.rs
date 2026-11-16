@@ -3390,14 +3390,14 @@ impl Game<'_> {
         // it. An extra area finishes its chunks out to its radius + 1. That
         // covers what the player tracks (`ChunkTrackingView`, within its view
         // distance + 1) and those chunks' lit neighbours.
-        let radius = host.hub.config.view_distance + 1;
         let rule = self.ui.rules.bool("spectators_generate_chunks");
-        // The held players are sent the level, so their chunks are kept as the placed ones'.
+        // The held players are sent the level, so their chunks are kept as the placed ones'. A player
+        // a native mod has capped is kept loaded out to the cap, not the server's view distance.
         self.streaming.extra = host
             .hub
-            .loading_chunks(|g| super::game_mode::loads_chunks(rule, g.spectator()))
+            .loading_areas(|g| super::game_mode::loads_chunks(rule, g.spectator()))
             .into_iter()
-            .map(|chunk| (chunk, radius))
+            .map(|(chunk, distance)| (chunk, distance + 1))
             // Fake players load a small area.
             .chain(
                 host.hub

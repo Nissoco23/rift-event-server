@@ -35,3 +35,23 @@ Code: `mobs/tame.rs` (`add_pet_goals`), `mobs/rabbit.rs`, `game/creatures.rs` (m
 `entity_nbt.rs`; tests in `game/rabbit_pet_tests.rs` (they need `HORIZON_TEST_RESOURCES`, and run with
 `--include-ignored`). There is no vanilla oracle for it, and the wild rabbit's behaviour does not change: the pet
 goals do nothing without an owner.
+
+## A player's own load and simulation distance
+
+A native mod can cap one player's view distance (`Host::set_player_view_distance`; the `viewdistance` mod does it
+by operator level). Vanilla keeps the server's view and simulation distances round every player whatever they
+asked for. Here the cap is also how far the server keeps that player's chunks loaded and simulated, under the
+server's view distance, which is the most any player can have.
+
+- **Loaded and simulated.** A player capped at 8 holds 8 chunks loaded and 8 simulating (entities, random ticks,
+  block ticks) in place of the server's two distances; an operator capped at 32 holds 32 and 32. Set the server's
+  view distance to the largest cap (`server.view_distance=32`): only the operators reach it. A player with no cap
+  has the server's view and simulation distances, as in vanilla.
+- **Simulation follows the cap.** A capped player's simulation distance is their cap, whatever the server's
+  `simulation_distance` says: it can be higher than the server's for an operator. `simulation_distance` still
+  applies to players with no cap.
+- **Cost.** Each operator at 32 holds a 65 by 65 chunk area loaded and simulating; players at 8 hold 17 by 17.
+
+Code: `lan/hub.rs` (`capped_distance`, `loading_areas`), `game.rs` (`update_chunk_tickets`), `ticket_levels.rs`
+(`Sources::limited`), `game/lan.rs` and `game/dedicated.rs` (the kept chunks); tests in `ticket_levels.rs` and
+`lan/hub_tests.rs`. There is no vanilla oracle for it.

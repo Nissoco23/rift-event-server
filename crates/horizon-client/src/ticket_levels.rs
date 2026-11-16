@@ -57,6 +57,10 @@ const ARENA_LEVEL: i32 = BLOCK_TICKING as i32 + 1 - ARENA_RADIUS;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Sources {
     pub players: Vec<(i32, i32)>,
+    /// Players a native mod has capped (`native_set_player_view_distance`), with the distance each
+    /// is held loaded and simulated out to, in place of the server's two: its cap, under the
+    /// server's view distance.
+    pub limited: Vec<((i32, i32), i32)>,
     pub forced: Vec<(i32, i32)>,
     /// Each `PORTAL` ticket's chunk and level.
     pub portal: Vec<((i32, i32), i32)>,
@@ -131,6 +135,10 @@ impl Tiled {
         let mut map = Self(FxHashMap::default());
         let (view, sim, reach) = reach(s);
         for &p in &s.players {
+            map.add(p, reach, i32::from(ENTITY_TICKING), view, sim);
+        }
+        for &(p, distance) in &s.limited {
+            let (view, sim, reach) = reach_at(distance, distance);
             map.add(p, reach, i32::from(ENTITY_TICKING), view, sim);
         }
         for &p in &s.forced {
@@ -304,6 +312,7 @@ impl ChunkTickets {
             && next.view_distance == old.view_distance
             && next.simulation_distance == old.simulation_distance
             && next.players == old.players
+            && next.limited == old.limited
             && next.forced == old.forced
             && next.dragon == old.dragon
             && self.portal_matches(old)
@@ -313,6 +322,8 @@ impl ChunkTickets {
         if let Some(s) = sources.as_mut() {
             s.players.sort_unstable();
             s.players.dedup();
+            s.limited.sort_unstable();
+            s.limited.dedup();
             s.forced.sort_unstable();
             s.portal = self.portal.iter().map(|t| (t.chunk, t.level)).collect();
             s.portal.sort_unstable();
@@ -410,6 +421,7 @@ fn random_bounds(s: &Sources) -> Option<(i32, i32, i32, i32)> {
         .players
         .iter()
         .map(|&p| (p, sim))
+        .chain(s.limited.iter().map(|&(p, d)| (p, d.clamp(0, 32))))
         .chain(s.forced.iter().map(|&f| (f, 0)))
         .chain(
             s.portal
@@ -429,8 +441,13 @@ fn random_bounds(s: &Sources) -> Option<(i32, i32, i32, i32)> {
 
 /// How far a player's tickets reach, and the simulation ticket's level.
 fn reach(s: &Sources) -> (i32, i32, i32) {
-    let view = s.view_distance.clamp(0, 32);
-    let simulation = s.simulation_distance.clamp(0, 32);
+    reach_at(s.view_distance, s.simulation_distance)
+}
+
+/// [`reach`] for a view and a simulation distance.
+fn reach_at(view: i32, simulation: i32) -> (i32, i32, i32) {
+    let view = view.clamp(0, 32);
+    let simulation = simulation.clamp(0, 32);
     // PLAYER_LOADING within the view distance, PLAYER_SIMULATION at the
     // player's chunk (`getPlayerTicketLevel`: never below 0).
     let player_sim = (i32::from(ENTITY_TICKING) - simulation).max(0);
@@ -444,6 +461,7 @@ fn compute(s: &Sources) -> Map {
         .players
         .iter()
         .map(|&p| (p, reach))
+        .chain(s.limited.iter().map(|&(p, d)| (p, reach_at(d, d).2)))
         .chain(s.forced.iter().map(|&f| (f, 1)))
         .chain(s.portal.iter().map(|&(p, level)| (p, ticket_radius(level))))
         .chain(s.dragon.map(|arena| (arena, ARENA_RADIUS)));
@@ -474,6 +492,20 @@ fn compute(s: &Sources) -> Map {
         e.1 = e.1.min(sim.min(i32::from(NONE.1)) as u8);
     };
     for &(px, pz) in &s.players {
+        for dz in -reach..=reach {
+            for dx in -reach..=reach {
+                let d = dx.abs().max(dz.abs());
+                lower(
+                    px + dx,
+                    pz + dz,
+                    i32::from(ENTITY_TICKING) + (d - view).max(0),
+                    player_sim + d,
+                );
+            }
+        }
+    }
+    for &((px, pz), distance) in &s.limited {
+        let (view, player_sim, reach) = reach_at(distance, distance);
         for dz in -reach..=reach {
             for dx in -reach..=reach {
                 let d = dx.abs().max(dz.abs());
@@ -542,6 +574,19 @@ fn compute_sparse(s: &Sources) -> FxHashMap<(i32, i32), (u8, u8)> {
             }
         }
     }
+    for &((px, pz), distance) in &s.limited {
+        let (view, player_sim, reach) = reach_at(distance, distance);
+        for dz in -reach..=reach {
+            for dx in -reach..=reach {
+                let d = dx.abs().max(dz.abs());
+                lower(
+                    (px + dx, pz + dz),
+                    i32::from(ENTITY_TICKING) + (d - view).max(0),
+                    player_sim + d,
+                );
+            }
+        }
+    }
     for &(fx, fz) in &s.forced {
         for dz in -1i32..=1 {
             for dx in -1i32..=1 {
@@ -578,6 +623,7 @@ mod tests {
     fn levels(players: &[(i32, i32)], forced: &[(i32, i32)], view: i32, sim: i32) -> Levels {
         let mut t = ChunkTickets::default();
         t.update(Some(Sources {
+            limited: Vec::new(),
             players: players.to_vec(),
             forced: forced.to_vec(),
             portal: Vec::new(),
@@ -617,6 +663,53 @@ mod tests {
         assert!(l.in_entity_ticking_range(10, 0) && !l.in_entity_ticking_range(11, 0));
     }
 
+    /// The server holds 6 chunks loaded and simulated around a player nobody capped, and a player
+    /// a native mod capped at `distance` is held at that instead, higher or lower than the server's.
+    fn with_limited(players: &[(i32, i32)], limited: &[((i32, i32), i32)]) -> Levels {
+        let mut t = ChunkTickets::default();
+        t.update(Some(Sources {
+            limited: limited.to_vec(),
+            players: players.to_vec(),
+            forced: Vec::new(),
+            portal: Vec::new(),
+            dragon: None,
+            view_distance: 6,
+            simulation_distance: 6,
+        }));
+        t.levels()
+    }
+
+    #[test]
+    fn a_capped_player_is_loaded_and_simulated_out_to_their_cap_alone() {
+        // A player under the server's 6 chunks, and an operator over them, far apart.
+        let l = with_limited(&[(0, 0)], &[((1000, 0), 2), ((-1000, 0), 20)]);
+        // The uncapped player: the server's 6 in both.
+        assert!(l.entity_ticking(6, 0) && !l.entity_ticking(7, 0));
+        assert!(l.loaded_entity_ticking(0, 6) && !l.loaded_entity_ticking(0, 7));
+        // The one capped at 2 loads and simulates 2, not the server's 6.
+        assert!(l.entity_ticking(1002, 0) && !l.entity_ticking(1003, 0));
+        assert!(l.loaded_entity_ticking(998, 0) && !l.loaded_entity_ticking(997, 0));
+        assert!(l.random_ticking(1000, 2) && !l.random_ticking(1000, 3));
+        // The one capped at 20 reaches 20, past the server's 6, loaded and simulated.
+        assert!(l.entity_ticking(-980, 0) && !l.entity_ticking(-979, 0));
+        assert!(l.loaded_entity_ticking(-1000, -20) && !l.loaded_entity_ticking(-1000, -21));
+        assert!(l.random_ticking(-1020, 20) && !l.random_ticking(-1021, 0));
+        // Random ticks are looked for in a box that holds all three.
+        let (x0, _, x1, _) = l.random_tick_bounds().unwrap();
+        assert!(x0 <= -1020 && x1 >= 1002);
+    }
+
+    #[test]
+    fn a_capped_player_beside_others_adds_to_what_is_held() {
+        // Two players 10 chunks apart: the server's 6 around one, the cap's 3 around the other.
+        let l = with_limited(&[(0, 0)], &[((10, 0), 3)]);
+        assert!(l.entity_ticking(6, 0), "the first player's reach");
+        assert!(
+            l.entity_ticking(13, 0) && !l.entity_ticking(14, 0),
+            "the cap's reach"
+        );
+    }
+
     #[test]
     fn every_player_and_forced_chunk() {
         let l = levels(&[(0, 0), (40, 0)], &[(-100, 7)], 4, 4);
@@ -648,6 +741,7 @@ mod tests {
         // around (0, 0) ticks for it.
         let sources = |dragon| {
             Some(Sources {
+                limited: Vec::new(),
                 players: vec![(12, 0)],
                 forced: Vec::new(),
                 portal: Vec::new(),
@@ -680,6 +774,7 @@ mod tests {
         let mut t = ChunkTickets::default();
         let s = |players: Vec<(i32, i32)>| {
             Some(Sources {
+                limited: Vec::new(),
                 players,
                 forced: Vec::new(),
                 portal: Vec::new(),
@@ -720,6 +815,7 @@ mod tests {
                 .map(|_| (next(spread), next(spread)))
                 .collect();
             let s = Sources {
+                limited: Vec::new(),
                 players,
                 forced,
                 portal: Vec::new(),
@@ -770,6 +866,7 @@ mod tests {
         // dragon fight's arena, which random ticks with nobody near it.
         let sources = || {
             Some(Sources {
+                limited: Vec::new(),
                 players: vec![(60, 40), (80, 80)],
                 forced: vec![(-30, 17)],
                 portal: Vec::new(),
@@ -840,6 +937,7 @@ mod tests {
                 })
                 .collect();
             let s = Sources {
+                limited: Vec::new(),
                 players: at.clone(),
                 forced: Vec::new(),
                 portal: Vec::new(),
@@ -918,6 +1016,10 @@ mod tiled_tests {
         };
         for case in 0..60 {
             let s = Sources {
+                limited: (0..case % 5)
+                    .map(|i| ((next(4000), next(4000)), [2, 8, 20, 32, 0][i]))
+                    .chain([((-17, 15), 5)])
+                    .collect(),
                 players: (0..case % 13)
                     .map(|_| (next(4000), next(4000)))
                     .chain([(15, -16), (16, -15)])
@@ -943,6 +1045,7 @@ mod tiled_tests {
             for &(cx, cz) in s
                 .players
                 .iter()
+                .chain(s.limited.iter().map(|(p, _)| p))
                 .chain(&s.forced)
                 .chain(s.portal.iter().map(|(p, _)| p))
             {

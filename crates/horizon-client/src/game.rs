@@ -4108,15 +4108,18 @@ impl Game<'_> {
     /// everywhere.
     fn update_chunk_tickets(&mut self) {
         let rule = self.ui.rules.bool("spectators_generate_chunks");
-        let mut players: Vec<((i32, i32), bool)> = self.lan.as_ref().map_or_else(Vec::new, |h| {
-            h.hub
-                .guests
-                .iter()
-                .filter(|g| h.hub.here(g))
-                .filter(|g| !g.fake) // fake players hold small forced tickets below
-                .map(|g| (g.chunk(), g.spectator()))
-                .collect()
-        });
+        // Each player's chunk, whether they are a spectator, and the distance a native mod has capped
+        // their tickets at, if it has (None: the server's view and simulation distances).
+        let mut players: Vec<((i32, i32), bool, Option<i32>)> =
+            self.lan.as_ref().map_or_else(Vec::new, |h| {
+                h.hub
+                    .guests
+                    .iter()
+                    .filter(|g| h.hub.here(g))
+                    .filter(|g| !g.fake) // fake players hold small forced tickets below
+                    .map(|g| (g.chunk(), g.spectator(), h.hub.capped_distance(g)))
+                    .collect()
+            });
         if let Some(p) = &self.player {
             players.push((
                 (
@@ -4124,6 +4127,7 @@ impl Game<'_> {
                     (p.position.z.floor() as i32) >> 4,
                 ),
                 self.spectator(),
+                None,
             ));
         }
         // A spectator the rule skips is still a player: a game that has one
@@ -4132,9 +4136,16 @@ impl Game<'_> {
         let sources = (!self.options.execution_role.is_client() || any_player).then(|| {
             horizon_client::ticket_levels::Sources {
                 players: players
-                    .into_iter()
-                    .filter(|&(_, spectator)| game_mode::loads_chunks(rule, spectator))
-                    .map(|(chunk, _)| chunk)
+                    .iter()
+                    .filter(|&&(_, spectator, capped)| {
+                        capped.is_none() && game_mode::loads_chunks(rule, spectator)
+                    })
+                    .map(|&(chunk, _, _)| chunk)
+                    .collect(),
+                limited: players
+                    .iter()
+                    .filter(|&&(_, spectator, _)| game_mode::loads_chunks(rule, spectator))
+                    .filter_map(|&(chunk, _, capped)| capped.map(|distance| (chunk, distance)))
                     .collect(),
                 // A native mod's ticket holds its chunk as `/forceload` does
                 // (NeoForge's `TicketController` uses the same `FORCED` level).

@@ -1013,6 +1013,28 @@ impl Hub {
             .map(Guest::chunk)
             .collect()
     }
+    /// The distance the server holds a player's chunks loaded and simulated out to when a native mod
+    /// has capped them (`native_set_player_view_distance`): the cap, under the server's view
+    /// distance. None for a player with no cap, who is held at the server's view and simulation
+    /// distances.
+    pub fn capped_distance(&self, g: &Guest) -> Option<i32> {
+        g.view_limit
+            .map(|limit| limit.min(self.config.view_distance))
+    }
+    /// [`Self::loading_chunks`] with how far each player's chunks are kept loaded: the server's view
+    /// distance, or the cap a mod set on them.
+    pub fn loading_areas(&self, loads: impl Fn(&Guest) -> bool) -> Vec<((i32, i32), i32)> {
+        self.guests
+            .iter()
+            .filter(|g| self.watches(g) && loads(g) && !g.fake)
+            .map(|g| {
+                (
+                    g.chunk(),
+                    self.capped_distance(g).unwrap_or(self.config.view_distance),
+                )
+            })
+            .collect()
+    }
     /// The areas fake players keep loaded: the chunk under each and its radius, their own view
     /// distance plus one (what they track), under the server's.
     pub fn fake_loading_areas(&self, loads: impl Fn(&Guest) -> bool) -> Vec<((i32, i32), i32)> {

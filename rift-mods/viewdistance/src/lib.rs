@@ -3,10 +3,11 @@
 //! while its operators still look as far as they like.
 //!
 //! The engine already caps one player's view distance (`Host::set_player_view_distance`, 2 to 32
-//! chunks, under the server's own and what the client asks for). This mod decides each player's cap
-//! from their operator level, once a second and when they join, and sets it only when it changed. The
-//! far ring (`max_view_distance`, docs/hosting.md) honours the same cap, so a player held to the
-//! server's own distance gets no saved chunks past it.
+//! chunks, under the server's own and what the client asks for), and holds that player's chunks
+//! loaded and simulated out to the same cap. This mod decides each player's cap from their operator
+//! level, once a second and when they join, and sets it only when it changed. The far ring
+//! (`max_view_distance`, docs/hosting.md) honours the same cap, so a player held to the server's own
+//! distance gets no saved chunks past it.
 //!
 //! The engine runs mods as Rust code linked into its executable, so this crate is a library and
 //! `crates/rift-engine` is the engine's `main` with it handed over (docs/rift-mods.md).

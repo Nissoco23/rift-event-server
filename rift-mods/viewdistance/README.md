@@ -12,30 +12,29 @@ Once a second, and when a player joins, the mod gives each player a limit from t
 - **Players** (below the operator level) get `non-op-max`, 8 chunks by default.
 - **Operators** (the `level` in `ops.json`, 1 and up by default) get `op-max`, 32 by default.
 
-A limit only lowers. A player's distance is the smallest of the server's own `view_distance`, what
-their client asks for and the limit, so a player never sees more than the server loads, and an
-operator with a high limit sees what the server and their own setting allow. The engine is told only
-when a player's limit changes, so `/op` and `/deop` take effect within a second and nothing is done
-the rest of the time. A fake player (a mod's bot) is left alone.
+A player's distance is the smallest of the server's own `view_distance`, what their client asks for
+and the limit, so the server's `view_distance` is the most anyone gets. The limit is also how far the
+server keeps that player's chunks **loaded and simulated**: a player at 8 holds 8 chunks loaded and
+8 simulating (mobs, crops, redstone), an operator at 32 holds 32 and 32, whatever the server's
+`simulation_distance` says (that one is for players with no limit). The engine is told only when a
+player's limit changes, so `/op` and `/deop` take effect within a second and nothing is done the
+rest of the time. A fake player (a mod's bot) is left alone.
 
 ### Seeing further than the server loads
 
-The server loads and ticks `view_distance` chunks around every player, whatever their limit, so a
-limit saves the server only what it would have sent. Operators can still see further: with
-`max_view_distance` above `view_distance`, each player is also sent the chunks the world has already
-saved, as far as their own distance goes, and those chunks are read and sent without being loaded or
-ticked ([docs/hosting.md](../../docs/hosting.md)). The limit decides who gets that ring. A setup for an
-event server:
+A limit lowers what the server loads, simulates and sends for that player, so a regular player at 8
+costs the server 8 chunks round them however far operators go. Set the server's `view_distance` to the
+largest limit, `op-max`, and let the limits do the rest. A setup for an event server:
 
 ```sh
-rift-server config set server.view_distance=8
-rift-server config set server.max_view_distance=32
-rift-server config set server.simulation_distance=8
+rift-server config set server.view_distance=32
 ```
 
-Everyone loads 8 chunks. Players see those 8, operators see up to 32 where the world is saved, so
-generate the area first (`/pregen`, [docs/pregeneration.md](../../docs/pregeneration.md)): the far ring
-sends only what exists, and shows nothing standing still but terrain.
+Players load, simulate and see 8 chunks (`non-op-max`), operators 32 (`op-max`), all of it loaded and
+ticking, so the cost is that of each operator's 65 by 65 chunk area. With `max_view_distance` above
+`view_distance`, each player is also sent chunks the world has already saved, past the loaded area,
+without loading or ticking them ([docs/hosting.md](../../docs/hosting.md)); the limit decides who gets
+that ring.
 
 ## Commands
 

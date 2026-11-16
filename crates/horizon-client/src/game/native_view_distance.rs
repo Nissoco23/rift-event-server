@@ -11,8 +11,13 @@ impl Game<'_> {
     /// this limit, whichever is smallest (`ChunkMap.getPlayerViewDistance`
     /// under the limit): only that player is told its radius
     /// (`SetChunkCacheRadius`), and it is sent and tracks chunks and entities
-    /// within it from its next view update. The server still loads its own
-    /// view distance round every player. The limit lasts until the player
+    /// within it from its next view update. The limit is also how far the
+    /// server keeps this player's chunks loaded and simulated (mobs, crops,
+    /// redstone), under the server's own view distance: a player held to 8
+    /// loads and simulates 8 whatever the server's, and one held to 32 loads
+    /// and simulates 32, so the server's view distance is the most any player
+    /// can have. A player with no limit has the server's view and simulation
+    /// distances. The limit lasts until the player
     /// leaves; a later server change (`view-distance`) keeps it. False off a
     /// server, for a player not online, and inside a guest's packet hook,
     /// where the hub is taken out (call it from a tick hook). API

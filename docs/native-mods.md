@@ -2708,8 +2708,11 @@ server only.
   to `distance` chunks (2 to 32), None gives it the server's again. The player's distance is the smallest of the
   server's, what its client asked for and the limit; only that player is told its radius (`SetChunkCacheRadius`), and
   from its next view update it is sent, keeps and tracks chunks and entities within it, the others as before. The
-  server still loads its own view distance round every player, so the limit can only lower a player's distance (raise
-  the server's and limit the others to give one player more). It lasts until the player leaves.
+  limit is also how far the server keeps that player's chunks loaded and simulated (mobs, crops, redstone tick around
+  them), under the server's view distance, which is the most any player can have: raise the server's and limit the
+  others to give one player more. A player with no limit has the server's view and simulation distances; this is
+  one of the places the engine differs from vanilla on purpose ([rift-additions.md](rift-additions.md)). It lasts
+  until the player leaves.
   `native_player_view_distance(uuid)` is the distance the player has now. Both answer false/None for a player not online
   and inside a guest's packet hook, where the hub is taken out: call them from a tick or console hook. API
   @API:player_view_distance@.

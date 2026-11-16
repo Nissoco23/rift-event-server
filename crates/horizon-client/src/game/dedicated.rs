@@ -1510,21 +1510,19 @@ impl Game<'_> {
             // A held player (arriving from another server) is sent the level too, so it
             // holds the world loaded around it as a placed player does.
             h.hub
-                .loading_chunks(|g| super::game_mode::loads_chunks(rule, g.spectator()))
+                .loading_areas(|g| super::game_mode::loads_chunks(rule, g.spectator()))
                 .first()
                 .copied()
         });
         if self.standalone_server() {
-            self.streaming.radius = if guest.is_some() {
-                self.settings.render_distance
-            } else {
-                -1
-            };
+            // The first player's area is the base one, as far as a native mod's cap on them lets
+            // it reach; `lan_update_streaming` keeps every player's own around them.
+            self.streaming.radius = guest.map_or(-1, |(_, distance)| distance);
         }
         let spawn = self
             .spawn
             .map(|s| ((s.x.floor() as i32) >> 4, (s.z.floor() as i32) >> 4));
-        if let Some(c) = guest.or(spawn) {
+        if let Some(c) = guest.map(|(chunk, _)| chunk).or(spawn) {
             self.streaming.center = c;
         }
     }

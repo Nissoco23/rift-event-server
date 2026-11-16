@@ -211,6 +211,28 @@ fn self_pose_wire_lifecycle_preserves_existing_publishers() {
 }
 
 #[test]
+fn a_players_chunks_are_kept_loaded_out_to_their_cap_under_the_servers_view_distance() {
+    let (mut hub, _rx) = hub_with_a_guest();
+    let chunk = hub.guests[0].chunk();
+    // No cap: the server's 10 chunks, and no cap to report.
+    assert_eq!(hub.loading_areas(|_| true), [(chunk, 10)]);
+    assert_eq!(hub.capped_distance(&hub.guests[0]), None);
+    // A cap under the server's lowers what is kept loaded round the player.
+    assert!(hub.set_guest_view_limit(1, Some(4)));
+    assert_eq!(hub.loading_areas(|_| true), [(chunk, 4)]);
+    assert_eq!(hub.capped_distance(&hub.guests[0]), Some(4));
+    // A cap over the server's is held to it: the server's view distance is the most it loads.
+    assert!(hub.set_guest_view_limit(1, Some(32)));
+    assert_eq!(hub.loading_areas(|_| true), [(chunk, 10)]);
+    assert_eq!(hub.capped_distance(&hub.guests[0]), Some(10));
+    // Taking the cap off gives the server's back.
+    assert!(hub.set_guest_view_limit(1, None));
+    assert_eq!(hub.capped_distance(&hub.guests[0]), None);
+    // A player a rule does not let load chunks holds none.
+    assert!(hub.loading_areas(|_| false).is_empty());
+}
+
+#[test]
 fn a_player_is_sent_their_own_skin_layers_and_again_when_they_change_or_the_client_starts_over() {
     // The layers the player's client was last sent about itself, in order.
     fn layers(rx: &std::sync::mpsc::Receiver<crate::lan::Out>) -> Vec<i8> {
