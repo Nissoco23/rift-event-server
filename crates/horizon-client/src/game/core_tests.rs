@@ -53,6 +53,42 @@ fn a_death_drops_the_off_hand_before_the_armour() {
     assert!(offhand.is_none() && armor.iter().all(Option::is_none));
 }
 
+#[test]
+fn a_copy_of_what_a_player_holds_is_in_the_order_of_a_drop_and_leaves_it_with_them() {
+    let stack = |item: &str| Some(ItemStack::new(item, 1));
+    let mut inventory = vec![stack("minecraft:diamond"), None, stack("minecraft:stick")];
+    let offhand = stack("minecraft:shield");
+    let armor = [
+        stack("minecraft:iron_helmet"),
+        None,
+        None,
+        stack("minecraft:iron_boots"),
+    ];
+    let copied: Vec<String> = death_copies(&inventory, &offhand, &armor)
+        .into_iter()
+        .map(|s| s.item.to_string())
+        .collect();
+    assert_eq!(
+        copied,
+        [
+            "minecraft:diamond",
+            "minecraft:stick",
+            "minecraft:shield",
+            "minecraft:iron_boots",
+            "minecraft:iron_helmet",
+        ]
+    );
+    // What is held stays held, and what vanishes is not copied.
+    assert_eq!(inventory.iter().flatten().count(), 2);
+    assert!(offhand.is_some() && armor.iter().flatten().count() == 2);
+    inventory[0]
+        .as_mut()
+        .unwrap()
+        .set_crafting_enchantments(vec![("minecraft:vanishing_curse".into(), 1)]);
+    let copied = death_copies(&inventory, &offhand, &armor);
+    assert!(copied.iter().all(|s| &*s.item != "minecraft:diamond"));
+}
+
 #[path = "knot_command_view_tests.rs"]
 mod knot_command_view_tests;
 /// `MinecraftServer.computeNextAutosaveInterval`: three hundred seconds of

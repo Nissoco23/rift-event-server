@@ -1,0 +1,11 @@
+{
+  "hooks": [],
+  "helpers": [
+    {"name": "world_spawn", "target": "horizon_client::game::native_world_spawn::Game<'_>::native_world_spawn"}
+  ],
+  "rust_summary": "the world spawn's block (`native_world_spawn`).",
+  "doc_summary": "`native_world_spawn()` is the block of the world spawn (`/setworldspawn`), none while the level has not found one yet. Bundles need \"hooks\": @API:world_spawn@.",
+  "comments": [
+    "crates/horizon-client/src/game/native_world_spawn.rs"
+  ]
+}

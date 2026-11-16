@@ -344,6 +344,9 @@ pub struct Guest {
     pub sent_skin: u8,
     /// Where the player last died (Player.lastDeathLocation), sent with the respawn.
     pub last_death: Option<(String, [i32; 3])>,
+    /// Whether the death that is being respawned from keeps the experience (a native mod may
+    /// decide it per death, `native_player_death_loot`); none: the keep_inventory rule does.
+    pub death_keeps_experience: Option<bool>,
     /// The last action sequence to acknowledge at the next tick (-1: none).
     pub ack_up_to: std::cell::Cell<i32>,
     pub sent_selected: usize,
@@ -574,6 +577,7 @@ impl Guest {
             sent_shoulders: [None; 2],
             sent_skin: 0,
             last_death: None,
+            death_keeps_experience: None,
             ack_up_to: std::cell::Cell::new(-1),
             sent_selected: 0,
             inbox: VecDeque::new(),

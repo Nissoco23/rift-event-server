@@ -4128,7 +4128,11 @@ impl Game<'_> {
             progress: g.xp_progress,
             total: g.xp_total,
         };
-        xp.respawn(self.ui.rules.bool("keep_inventory") || g.game_mode == SPECTATOR);
+        let keeps = g
+            .death_keeps_experience
+            .take()
+            .unwrap_or_else(|| self.ui.rules.bool("keep_inventory"));
+        xp.respawn(keeps || g.game_mode == SPECTATOR);
         (g.xp_level, g.xp_progress, g.xp_total) = (xp.level, xp.progress, xp.total);
         // PlayerEvent.Clone, at the end of `restoreFrom`: the data is copied,
         // the new player not yet placed.
@@ -4511,13 +4515,27 @@ impl Game<'_> {
             g.dead = true;
             g.last_death = Some((g.dimension.clone(), g.position.map(|v| v.floor() as i32)));
             let (id, at) = (g.entity_id, g.position);
+            let (name, uuid) = (g.name.clone(), g.uuid);
+            // What the death does to the inventory and the experience: keep_inventory's, unless a
+            // mod decides otherwise for this death.
+            let rule = self.ui.rules.bool("keep_inventory");
+            let (mut keep_inventory, mut drop_inventory) = (rule, !rule);
+            let (mut drop_experience, mut keep_experience) = (!rule, rule);
+            self.native_player_death_loot(
+                uuid,
+                &name,
+                &mut keep_inventory,
+                &mut drop_inventory,
+                &mut drop_experience,
+                &mut keep_experience,
+            );
+            g.death_keeps_experience = Some(keep_experience);
             let reward = Experience {
                 level: g.xp_level,
                 progress: g.xp_progress,
                 total: g.xp_total,
             }
-            .death_reward(self.ui.rules.bool("keep_inventory") || g.game_mode == SPECTATOR);
-            let (name, uuid) = (g.name.clone(), g.uuid);
+            .death_reward(!drop_experience || g.game_mode == SPECTATOR);
             // ServerPlayer.die: dropAllDeathLoot unless a spectator, from the eyes less 0.3.
             let drops = (g.game_mode != SPECTATOR)
                 .then(|| [at[0], at[1] + g.eye_height() - f64::from(0.3f32), at[2]]);
@@ -4621,7 +4639,7 @@ impl Game<'_> {
             // timers it resets.
             self.as_guest(host, conn, |game| {
                 if let Some(eyes) = drops {
-                    game.drop_inventory(eyes, (uuid, id));
+                    game.drop_inventory(eyes, (uuid, id), keep_inventory, drop_inventory);
                 }
                 game.score_player_died();
                 if let Some(kind) = &killer {

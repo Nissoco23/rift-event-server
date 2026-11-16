@@ -1,0 +1,15 @@
+{
+  "hooks": [
+    {
+      "name": "player_death_loot",
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_player_death_loot",
+      "neoforge": "none (NeoForge's LivingDropsEvent only changes the drops)",
+      "side": "server",
+      "mod_api": {
+        "contract": "listen"
+      }
+    }
+  ],
+  "rust_summary": "what a server player's death does to their inventory and experience, which a mod may choose per death (`native_player_death_loot`).",
+  "doc_summary": "`native_player_death_loot(player, name, keep_inventory, drop_inventory, drop_experience, keep_experience)` is asked once for each server player's death (`ServerPlayer.die`), before the loot is dropped, with what the `keep_inventory` game rule says (kept and not dropped, or dropped and not kept; experience dropped and not kept, or kept and not dropped). A mod may set each: kept and dropped leaves the inventory with the player and throws a copy of it; neither takes it away and throws nothing. `drop_experience` throws the player's experience as orbs (7 points a level, 100 at most) and `keep_experience` gives it back to them when they respawn. A spectator drops and keeps as in vanilla. Bundles need \"hooks\": @API:player_death_loot@."
+}

@@ -8974,6 +8974,34 @@ impl Game<'_> {
     /// `player` (`name`) is joining: the "joined the game" line the host's chat
     /// shows (`line`). Set `line` to `None` to show nothing, or replace it. Only
     /// the host's chat is asked: a dedicated server sends no such line. Server-side.
+    /// What a server player's death does to their inventory and experience, asked once for each
+    /// death (`ServerPlayer.die`) before the loot is dropped. The four start as the
+    /// `keep_inventory` game rule has them (kept and not dropped, or dropped and not kept;
+    /// experience dropped and not kept, or kept and not dropped) and a mod may set each:
+    /// `keep_inventory` and `drop_inventory` both leave the inventory with the player and throw a
+    /// copy of it, neither takes it away and throws nothing; `drop_experience` throws orbs worth
+    /// 7 points a level, 100 at most, and `keep_experience` gives the experience back at the respawn.
+    /// A spectator drops and keeps as in vanilla. Server-side. API @API:player_death_loot@.
+    pub(super) fn native_player_death_loot(
+        &mut self,
+        player: u128,
+        name: &str,
+        keep_inventory: &mut bool,
+        drop_inventory: &mut bool,
+        drop_experience: &mut bool,
+        keep_experience: &mut bool,
+    ) {
+        mod_api::dispatch_player_death_loot(
+            self,
+            mod_api::mods(),
+            player,
+            name,
+            keep_inventory,
+            drop_inventory,
+            drop_experience,
+            keep_experience,
+        );
+    }
     /// What a server player's death tells the others, asked when death messages are shown
     /// (`ServerPlayer.die`'s `broadcastSystemMessage`): `line` is the death message and a mod may
     /// replace it, or set it to `None` to tell nobody; `radius` is `None` (everyone the team lets

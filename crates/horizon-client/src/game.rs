@@ -343,6 +343,7 @@ pub mod native_world_draw;
 mod native_world_edit;
 mod native_world_read;
 mod native_world_seed;
+mod native_world_spawn;
 mod natural_spawning;
 mod nautili;
 mod net_harness;
@@ -3196,6 +3197,20 @@ fn death_drops(
     let mut stacks: Vec<ItemStack> = inventory.iter_mut().filter_map(Option::take).collect();
     stacks.extend(offhand.take());
     stacks.extend(armor.iter_mut().rev().filter_map(Option::take));
+    stacks.retain(|s| s.enchantment_level("minecraft:vanishing_curse") == 0);
+    stacks
+}
+
+/// What a player holds, as [`death_drops`] lists it, without taking it from them (the vanishing
+/// curse's items are not copied): what a death that keeps the inventory and drops it too throws.
+fn death_copies(
+    inventory: &[Option<ItemStack>],
+    offhand: &Option<ItemStack>,
+    armor: &[Option<ItemStack>],
+) -> Vec<ItemStack> {
+    let mut stacks: Vec<ItemStack> = inventory.iter().flatten().cloned().collect();
+    stacks.extend(offhand.iter().cloned());
+    stacks.extend(armor.iter().rev().flatten().cloned());
     stacks.retain(|s| s.enchantment_level("minecraft:vanishing_curse") == 0);
     stacks
 }
