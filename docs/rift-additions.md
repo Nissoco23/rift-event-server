@@ -12,13 +12,17 @@ A player can tame a rabbit the way they tame a wolf.
   (`nextInt(3) == 0`, the wolf's odds). A tamed rabbit shows hearts; a failed try shows smoke. A player in
   creative mode keeps the carrot. Taming fires the `minecraft:tame_animal` advancement trigger.
 - **Breeding food.** A carrot no longer puts a wild rabbit in love mode, because it tames it. Golden carrots and
-  dandelions still breed wild rabbits. A tamed rabbit breeds with any of the three, unless it is hurt: then the
-  food heals it by its nutrition value instead.
-- **Following.** A tamed rabbit follows its owner and teleports to them when 12 or more blocks away, like a
-  wolf (`FollowOwner`). It never runs from players.
-- **Staying.** The owner right-clicks a tamed rabbit with an item that is not its food (an empty hand works) to
-  make it stay put, and right-clicks again to make it follow. Nobody else can. A hit makes a sitting rabbit stand
-  again. A newly tamed rabbit starts out following, not sitting.
+  dandelions still breed wild rabbits. A tamed rabbit is bred by golden carrots and dandelions only; a carrot
+  never breeds it (or speeds up a tamed baby). Any of the three heals a hurt tamed rabbit by its nutrition
+  value, a carrot included. A carrot on a whole tamed rabbit is not used up: it is an item like any other, so
+  its owner's click makes it sit or stand, and another player's click does nothing.
+- **Following.** A tamed rabbit follows its owner from 10 blocks away and teleports to them when 12 or more
+  blocks away, like a wolf (`FollowOwner`), but hops about four times as fast as a plain follow (speed modifier
+  2.2, the panic speed, which also shortens the pause between hops). It never runs from players.
+- **Staying.** The owner right-clicks a tamed rabbit with anything that does not breed it (an empty hand, a
+  carrot) to make it stay put, and right-clicks again to make it follow. Nobody else can. A hit makes a sitting
+  rabbit stand again. A newly tamed rabbit starts out following, not sitting. A rabbit comes to a player
+  holding its food, as any rabbit does (`Tempt`), until it is told to stay.
 - **Offspring.** A baby of a tamed parent is tamed and has the same owner.
 - **Saving.** `Owner` and `Sitting` are written to the rabbit's NBT only while it is tamed. A wild rabbit saves
   exactly as in vanilla, and `summon minecraft:rabbit` with `Owner` set makes a tamed one.

@@ -202,7 +202,7 @@ fn only_the_owner_makes_a_tamed_rabbit_sit_or_stand() {
 
 #[test]
 #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
-fn its_food_heals_a_hurt_tamed_rabbit_and_breeds_a_whole_one() {
+fn a_carrot_heals_a_hurt_tamed_rabbit_but_only_the_other_foods_breed_it() {
     let mut game = game();
     let id = pet(&mut game, 100, [0.5, 64.0, 2.0]);
     let max = mob(&game, id).attrs.max_health;
@@ -214,10 +214,63 @@ fn its_food_heals_a_hurt_tamed_rabbit_and_breeds_a_whole_one() {
         "a carrot's 3 points of food heal a rabbit of 3"
     );
     assert!(!mob(&game, id).extra.sitting);
-    // Whole, the same food breeds it instead of making it sit.
-    assert_eq!(use_on(&mut game, id, "minecraft:carrot"), 0);
-    assert!(mob(&game, id).extra.in_love > 0);
+    // Whole, a carrot breeds nothing and is kept: it makes the rabbit sit, as any item does.
+    assert_eq!(use_on(&mut game, id, "minecraft:carrot"), 1);
+    assert_eq!(mob(&game, id).extra.in_love, 0);
+    assert!(mob(&game, id).extra.sitting);
+    // Golden carrots and dandelions breed it, and are used up.
+    for (food, other) in [
+        ("minecraft:golden_carrot", 101),
+        ("minecraft:dandelion", 102),
+    ] {
+        let id = pet(&mut game, other, [0.5, 64.0, 2.0]);
+        assert_eq!(use_on(&mut game, id, food), 0, "{food} is eaten");
+        assert!(mob(&game, id).extra.in_love > 0, "{food}");
+        assert!(!mob(&game, id).extra.sitting, "{food}");
+    }
+}
+
+#[test]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+fn another_players_carrot_does_nothing_to_a_tamed_rabbit() {
+    let mut game = game();
+    let id = pet(&mut game, 100, [0.5, 64.0, 2.0]);
+    mob_mut(&mut game, id).extra.owner = Some([1, 2, 3, 4]);
+    assert_eq!(use_on(&mut game, id, "minecraft:carrot"), 1);
+    let m = mob(&game, id);
+    assert!(m.extra.in_love == 0 && !m.extra.sitting);
+}
+
+#[test]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+fn a_rabbit_told_to_sit_with_a_carrot_in_hand_stays_put_where_it_was_following() {
+    let mut game = game();
+    // Within the follow distance, the rabbit comes to a player holding its food (`Tempt`).
+    game.player.as_mut().unwrap().position = Vec3::new(8.5, 64.0, 4.5);
+    let id = pet(&mut game, 100, [1.5, 64.0, 1.5]);
+    for _ in 0..40 {
+        tick(&mut game);
+    }
     assert!(!mob(&game, id).extra.sitting);
+    assert_eq!(use_on(&mut game, id, "minecraft:carrot"), 1);
+    assert!(
+        mob(&game, id).extra.sitting,
+        "the carrot is no breeding food"
+    );
+    // The carrot is still in the player's hand. Let it land and settle, then it must not move.
+    for _ in 0..30 {
+        tick(&mut game);
+    }
+    let at = mob(&game, id).position;
+    for _ in 0..150 {
+        tick(&mut game);
+    }
+    let now = mob(&game, id).position;
+    assert!(
+        ((now.x - at.x).powi(2) + (now.z - at.z).powi(2)).sqrt() < 0.3,
+        "it moved from {at:?} to {now:?}"
+    );
+    assert!(mob(&game, id).extra.sitting);
 }
 
 #[test]
@@ -263,6 +316,27 @@ fn a_tamed_rabbit_walks_to_its_owner_from_ten_blocks_and_stops_near() {
     }
     let end = distance_to_player(&game, id);
     assert!(end < 5.0, "from {start} to {end}");
+}
+
+/// A rabbit that follows at a plain speed modifier of 1.0 takes about 180 ticks to cover 11 blocks
+/// to its owner (measured); a pet hops about four times as fast, so it takes about 45.
+#[test]
+#[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+fn a_tamed_rabbit_hops_about_four_times_as_fast_as_a_plain_follow() {
+    let mut game = game();
+    game.player.as_mut().unwrap().position = Vec3::new(10.5, 64.0, 6.5);
+    let id = pet(&mut game, 100, [0.5, 64.0, 0.5]);
+    let start = distance_to_player(&game, id);
+    assert!(start > 11.0 && start < 12.0, "{start}");
+    let mut arrived = None;
+    for t in 0..180 {
+        tick(&mut game);
+        if arrived.is_none() && distance_to_player(&game, id) < 3.0 {
+            arrived = Some(t);
+        }
+    }
+    let arrived = arrived.expect("it came");
+    assert!(arrived < 70, "arrived after {arrived} ticks");
 }
 
 #[test]

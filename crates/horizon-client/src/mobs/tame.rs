@@ -103,14 +103,19 @@ pub fn register(m: &mut Mob) {
         ),
     );
 }
+/// The speed modifier a tamed rabbit follows its owner with. At a plain 1.0 a rabbit covers about a
+/// block a second; from 2.2 up (the panic speed) it also waits 3 ticks between hops instead of 10
+/// (`Rabbit.customServerAiStep`). Measured over a walk to an owner 11 blocks away, 2.2 covers the
+/// ground 4.4 times as fast as 1.0, which is what a Rift pet rabbit is meant to do.
+const RABBIT_FOLLOW_SPEED: f64 = 2.2;
 /// What a rabbit gets of a pet's goals: it sits when told to and follows its owner from ten blocks
-/// away, as a wolf does, teleporting to an owner twelve blocks off. A Rift addition: vanilla
-/// rabbits cannot be tamed. Both goals do nothing until the rabbit has an owner, so a wild one is
-/// as vanilla's.
+/// away, as a wolf does but about four times as fast, teleporting to an owner twelve blocks off. A
+/// Rift addition: vanilla rabbits cannot be tamed. Both goals do nothing until the rabbit has an
+/// owner, so a wild one is as vanilla's.
 pub fn add_pet_goals(m: &mut Mob) {
     let g = &mut m.ai.goals;
     g.add(2, SitWhenOrdered);
-    g.add(5, FollowOwner::new(1.0, 10.0, 2.0));
+    g.add(5, FollowOwner::new(RABBIT_FOLLOW_SPEED, 10.0, 2.0));
 }
 /// `Parrot.registerGoals`: a tamed parrot sits when told to and follows its
 /// owner from five blocks away; it wanders to trees (`ParrotWanderGoal`) and

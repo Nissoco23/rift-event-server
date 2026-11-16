@@ -7035,7 +7035,8 @@ impl Game<'_> {
                 rabbit_taming = Some(tamed);
             }
             // A tamed rabbit's food heals it, as a cat's does (`TamableAnimal.feed`), until it is
-            // whole; then `Animal.mobInteract` breeds it.
+            // whole; then `Animal.mobInteract` breeds it, except with a plain carrot, which only
+            // heals (golden carrots and dandelions breed a tamed rabbit).
             Species::Rabbit if m.extra.tame && is_food && m.health < m.attrs.max_health => {
                 let heal = self
                     .res
@@ -7048,9 +7049,11 @@ impl Game<'_> {
                 eat = eating_sound(m, &mut self.world.random);
             }
             // The owner makes a tamed rabbit sit or stand, as a cat's owner does, unless the
-            // click is feeding it for breeding.
+            // click is feeding it for breeding. A carrot is no breeding food for a tamed rabbit.
             Species::Rabbit
-                if m.extra.tame && m.extra.owner == Some(acting) && !(is_food && takes_food(m)) =>
+                if m.extra.tame
+                    && m.extra.owner == Some(acting)
+                    && !(is_food && &*item != "minecraft:carrot" && takes_food(m)) =>
             {
                 m.extra.sitting = !m.extra.sitting;
                 m.ai.jumping = false;
@@ -7059,6 +7062,11 @@ impl Game<'_> {
                     m.position.x.floor() as i32 >> 4,
                     m.position.z.floor() as i32 >> 4,
                 ));
+            }
+            // Nobody but the owner makes a tamed rabbit sit, and a plain carrot never breeds it:
+            // the click is taken and does nothing.
+            Species::Rabbit if m.extra.tame && &*item == "minecraft:carrot" => {
+                return Ok(true);
             }
             // Dolphin.mobInteract: a fish makes a baby grow by a tenth and an
             // adult remember it (`gotFish`), to swim to a treasure.
