@@ -32,7 +32,8 @@ A player below that level gets vanilla's "unknown command".
 - `/kill` and the void still kill: otherwise a protected player would fall for ever.
 - Armour, enchantments, effects and absorption take their part first; the floor is on what reaches the health.
 - `/deathprotect` with no word switches it for one player: the one who typed it, or the one named. On and off
-  say what they set, so "on" on a player who has it stays on. Level does not turn protection on; it says so when
+  say what they set, so "on" on a player who has it stays on and says so ("Bob death protection is already
+  enabled"); for several players the line counts those it changed and, in gray, those that already had it. Level does not turn protection on; it says so when
   protection is off. Targets that are players are named as others know them: by their nickname when they
   have one. Either name finds them, the nickname first when one player's is another's name.
 - The chat box completes targets with nicknames (the name when there is none) and the selectors the command takes
@@ -45,8 +46,11 @@ Answers:
 Your death protection has been enabled
 Minimum health: 0.5 hearts
 Bob death protection has been disabled
+Bob death protection is already disabled
 Death protection has been disabled for 29 players
 ```
+
+The minimum health line is gray.
 
 A health point is half a heart, so level 1 is `0.5 hearts`, 2 is `1 heart` and 3 is `1.5 hearts`: only exactly one
 heart is singular.

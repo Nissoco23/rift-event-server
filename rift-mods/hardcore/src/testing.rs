@@ -25,6 +25,8 @@ pub struct FakeHost {
     pub players: Vec<NativeServerPlayer>,
     /// What the commands answered, as plain text.
     pub feedback: Vec<String>,
+    /// The same, as the engine would draw them.
+    pub styled: Vec<Text>,
     /// Every kick: the player and the reason, as plain text.
     pub kicks: Vec<(u128, String)>,
     /// Every game mode a player was put in.
@@ -76,6 +78,7 @@ impl Host for FakeHost {
 
     fn feedback(&mut self, line: Text) {
         self.feedback.push(line.plain());
+        self.styled.push(line);
     }
 }
 
@@ -105,6 +108,7 @@ impl Rig {
             host: FakeHost {
                 players: Vec::new(),
                 feedback: Vec::new(),
+                styled: Vec::new(),
                 kicks: Vec::new(),
                 game_modes: Vec::new(),
                 lines: Vec::new(),
@@ -175,6 +179,7 @@ impl Rig {
     pub fn say(&mut self, uuid: u128, line: &str) -> Option<Vec<String>> {
         let player = self.host.players.iter().find(|p| p.uuid == uuid).cloned()?;
         self.host.feedback.clear();
+        self.host.styled.clear();
         let mut ran = false;
         dispatch_perform_command(&mut self.host, &self.mods, &player, line, &mut ran);
         ran.then(|| std::mem::take(&mut self.host.feedback))
@@ -424,13 +429,10 @@ mod scenarios {
     fn on_and_off_set_it_where_the_toggle_would_flip_it() {
         let mut r = rig();
         said(r.say(OP, "deathprotect on bob"));
-        // On again stays on, where the toggle would have turned it off.
+        // On again stays on, where the toggle would have turned it off, and says so.
         assert_eq!(
             said(r.say(OP, "deathprotect on bob")),
-            [
-                "Bob death protection has been enabled",
-                "Minimum health: 0.5 hearts"
-            ]
+            ["Bob death protection is already enabled"]
         );
         assert_eq!(r.hit(BOB, 20.0, 50.0, "minecraft:generic", false), 19.0);
         assert_eq!(
@@ -439,7 +441,7 @@ mod scenarios {
         );
         assert_eq!(
             said(r.say(OP, "deathprotect off bob")),
-            ["Bob death protection has been disabled"]
+            ["Bob death protection is already disabled"]
         );
         assert_eq!(r.hit(BOB, 20.0, 50.0, "minecraft:generic", false), 50.0);
         // With no one named, it is for the one who typed it.
@@ -472,6 +474,54 @@ mod scenarios {
             ["Death protection has been disabled for 29 players"]
         );
         assert_eq!(r.hit(0x1000, 20.0, 99.0, "minecraft:generic", false), 99.0);
+    }
+
+    #[test]
+    fn a_player_already_in_the_state_is_told_so() {
+        let mut r = rig();
+        // Nobody has it on: off says so, and so for yourself.
+        assert_eq!(
+            said(r.say(OP, "deathprotect off")),
+            ["Your death protection is already disabled"]
+        );
+        said(r.say(OP, "deathprotect on"));
+        assert_eq!(
+            said(r.say(OP, "deathprotect on")),
+            ["Your death protection is already enabled"]
+        );
+        assert_eq!(
+            said(r.say(OP, "deathprotect on @a")),
+            [
+                "Death protection has been enabled for 2 players",
+                "1 already had it enabled"
+            ]
+        );
+        assert_eq!(
+            said(r.say(OP, "deathprotect on @a")),
+            ["Death protection is already enabled for 3 players"]
+        );
+        assert_eq!(
+            said(r.say(OP, "deathprotect off @a")),
+            ["Death protection has been disabled for 3 players"]
+        );
+        assert_eq!(
+            said(r.say(OP, "deathprotect off @a")),
+            ["Death protection is already disabled for 3 players"]
+        );
+    }
+
+    #[test]
+    fn the_minimum_health_is_told_in_gray() {
+        let mut r = rig();
+        said(r.say(OP, "deathprotect on bob"));
+        let line = r.host.styled.last().expect("a second line");
+        assert_eq!(line.plain(), "Minimum health: 0.5 hearts");
+        assert!(
+            line.spans
+                .iter()
+                .all(|span| span.style.color == Some(rift_chat::GRAY)),
+            "{line:?}"
+        );
     }
 
     #[test]
@@ -548,7 +598,10 @@ mod scenarios {
         );
         assert_eq!(
             said(r.console("deathprotect on @a")),
-            ["Death protection has been enabled for 3 players"]
+            [
+                "Death protection has been enabled for 2 players",
+                "1 already had it enabled"
+            ]
         );
     }
 

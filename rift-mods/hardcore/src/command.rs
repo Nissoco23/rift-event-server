@@ -324,7 +324,7 @@ fn toggle(state: &mut State, actor: &Actor, line: &str, who: Option<&str>, out: 
     let on = !state.protection_of(target.uuid).enabled;
     state.protection.entry(target.uuid).or_default().enabled = on;
     out.save = true;
-    announce(state, actor, &[target], on, out);
+    announce(state, actor, &[target], &[true], on, out);
 }
 
 fn set(
@@ -346,45 +346,67 @@ fn set(
             return out.refuse(line, at, &e);
         }
     };
+    let changed: Vec<bool> = targets
+        .iter()
+        .map(|t| state.protection_of(t.uuid).enabled != on)
+        .collect();
     for target in &targets {
         state.protection.entry(target.uuid).or_default().enabled = on;
     }
-    out.save = true;
-    announce(state, actor, &targets, on, out);
+    out.save = changed.contains(&true);
+    announce(state, actor, &targets, &changed, on, out);
 }
 
-/// Tells who ran a command that `targets` have protection `on` or off now.
+/// Tells who ran a command that `targets` have protection `on` or off now. `changed` says for each
+/// whether it was a change: one who already had it is told so, and counted apart.
 fn announce(
     state: &State,
     actor: &Actor,
     targets: &[NativeServerPlayer],
+    changed: &[bool],
     on: bool,
     out: &mut Outcome,
 ) {
     let word = if on { "enabled" } else { "disabled" };
     match targets {
         [one] => {
-            if is_self(actor, one) {
-                out.say(&format!(
-                    "<white>Your death protection has been <accent>{word}</accent></white>"
-                ));
+            let whose = if is_self(actor, one) {
+                "Your".to_owned()
             } else {
-                out.say(&format!(
-                    "<white><accent>{}</accent> death protection has been <accent>{word}</accent></white>",
-                    escape(shown(one))
+                format!("<accent>{}</accent>", escape(shown(one)))
+            };
+            if !changed[0] {
+                return out.say(&format!(
+                    "<white>{whose} death protection is already <accent>{word}</accent></white>"
                 ));
             }
+            out.say(&format!(
+                "<white>{whose} death protection has been <accent>{word}</accent></white>"
+            ));
             if on {
                 out.say(&format!(
-                    "<white>Minimum health: <accent>{}</accent></white>",
+                    "<gray>Minimum health: {}</gray>",
                     hearts(state.protection_of(one.uuid).level)
                 ));
             }
         }
-        many => out.say(&format!(
-            "<white>Death protection has been <accent>{word}</accent> for <accent>{}</accent></white>",
-            count(many.len(), "player")
-        )),
+        many => {
+            let did = changed.iter().filter(|c| **c).count();
+            let already = many.len() - did;
+            if did == 0 {
+                return out.say(&format!(
+                    "<white>Death protection is already <accent>{word}</accent> for <accent>{}</accent></white>",
+                    count(already, "player")
+                ));
+            }
+            out.say(&format!(
+                "<white>Death protection has been <accent>{word}</accent> for <accent>{}</accent></white>",
+                count(did, "player")
+            ));
+            if already > 0 {
+                out.say(&format!("<gray>{already} already had it {word}</gray>"));
+            }
+        }
     }
 }
 
