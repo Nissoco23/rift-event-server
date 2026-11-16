@@ -88,6 +88,7 @@ Game workspace (root `Cargo.toml`). The launcher and the other Horizon-only crat
 | `viewdistance` (in `rift-mods/`) | A native mod that limits how far each player is sent chunks: one distance for players, another for operators ([README](rift-mods/viewdistance/README.md)) |
 | `throwingdiscs` (in `rift-mods/`) | A native mod that ports the Throwing Discs plugin: five tiers of echo-shard discs thrown with a right-click, piercing, ricocheting and returning, with their recipes, anvil rules and `/discs` ([README](rift-mods/throwingdiscs/README.md)) |
 | `hardcore` (in `rift-mods/`) | A native mod for the hardcore rules: `/deathprotect` holds an operator's health above a floor, `/ondeath` kicks, spectates or leaves a player who dies, `/deathmsg` and `/deathmsgradius` say what the others are told ([README](rift-mods/hardcore/README.md)) |
+| `voicechat` (in `rift-mods/`) | A native mod that is a server for the Simple Voice Chat protocol (compatibility 20, the 2.6 releases): plugin messages on `voicechat:` channels and an encrypted UDP voice relay, so players who have that client mod talk by proximity and in groups; optional for players ([README](rift-mods/voicechat/README.md)) |
 | `essentials` (in `rift-mods/`) | A native mod for operator shortcuts: `/gmc` `/gms` `/gmsp` `/gma` set a game mode, `/flyspeed` the flying speed ([README](rift-mods/essentials/README.md)) |
 
 Other top-level folders: `scripts/` (`build.sh`), `tools/` (harnesses and dev scripts), `tests/` (Python unit tests: `python3 -m

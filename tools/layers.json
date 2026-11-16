@@ -49,6 +49,7 @@
     "essentials": "platform",
     "throwingdiscs": "platform",
     "hardcore": "platform",
+    "voicechat": "platform",
 
     "horizon-addresses": "horizon",
     "horizon-bench": "horizon",

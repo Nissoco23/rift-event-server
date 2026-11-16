@@ -3731,6 +3731,7 @@ dependencies = [
  "sculkstorm",
  "throwingdiscs",
  "viewdistance",
+ "voicechat",
 ]
 
 [[package]]
@@ -4694,6 +4695,17 @@ version = "0.1.0"
 dependencies = [
  "horizon-client",
  "rift-chat",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "voicechat"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "ring",
  "serde",
  "toml",
 ]

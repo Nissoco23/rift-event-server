@@ -68,5 +68,7 @@ markup.
   right-click, with its recipes, enchanting and `/discs`.
 - [Hardcore](../rift-mods/hardcore/README.md): death protection, what happens to a player who dies, and what the others
   are told of it, for the event server's hardcore lore.
+- [VoiceChat](../rift-mods/voicechat/README.md): a server for Simple Voice Chat's protocol (2.6), so players with that
+  mod talk by proximity and in groups.
 - [Essentials](../rift-mods/essentials/README.md): `/gmc`, `/gms`, `/gmsp`, `/gma` for the game mode and
   `/flyspeed` for the flying speed, for operators.

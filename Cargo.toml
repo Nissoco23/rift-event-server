@@ -53,6 +53,7 @@ members = [
     "rift-mods/essentials",
     "rift-mods/throwingdiscs",
     "rift-mods/hardcore",
+    "rift-mods/voicechat",
     "xtask",
 ]
 resolver = "2"

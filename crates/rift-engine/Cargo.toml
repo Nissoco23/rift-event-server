@@ -19,6 +19,7 @@ viewdistance = { path = "../../rift-mods/viewdistance" }
 essentials = { path = "../../rift-mods/essentials" }
 throwingdiscs = { path = "../../rift-mods/throwingdiscs" }
 hardcore = { path = "../../rift-mods/hardcore" }
+voicechat = { path = "../../rift-mods/voicechat" }
 
 [lints]
 workspace = true
