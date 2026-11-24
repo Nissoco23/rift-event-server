@@ -679,7 +679,7 @@ def check_combat(bins, scratch, out, seconds):
     for name in ('NoSwing', 'Aura'):
         cheater = again[name]['per_bot'][0]
         ban = banned.get(cheater['name'])
-        if not ban or ban.get('reason') != 'Horizon anticheat: combat' or ban.get('source') != 'Horizon anticheat':
+        if not ban or ban.get('reason') != 'Rift anticheat: combat' or ban.get('source') != 'Rift anticheat':
             raise Failed(f'combat: {cheater["name"]} came back, cheated again and was not banned: {bans}')
         if 'disconnected' not in (cheater['error'] or ''):
             raise Failed(f'combat: banned {cheater["name"]} was not sent away ({cheater["error"]})')

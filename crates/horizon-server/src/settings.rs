@@ -1,4 +1,4 @@
-//! `horizon-server config`: read server.toml's settings, and change them the way the server checks them
+//! `rift-server config`: read server.toml's settings, and change them the way the server checks them
 //! (docs/server.md, section 4). A running server takes what vanilla can change live through its console
 //! (difficulty, the default game mode, the whitelist) and through its management settings (the message of the
 //! day, the player limit) at once; the rest applies at the next start.
@@ -82,7 +82,7 @@ impl Outcome {
         }
         if !self.restart.is_empty() {
             out += &format!(
-                "Saved; restart the server to apply: {} (`horizon-server restart`)\n",
+                "Saved; restart the server to apply: {} (`rift-server restart`)\n",
                 self.restart.join(", ")
             );
         }
@@ -109,9 +109,7 @@ pub fn parse_change(
         let like = current
             .get(section)
             .and_then(|s| s.get(field))
-            .ok_or_else(|| {
-                format!("{key} is not a setting (`horizon-server config` lists them)")
-            })?;
+            .ok_or_else(|| format!("{key} is not a setting (`rift-server config` lists them)"))?;
         match like {
             toml::Value::Boolean(_) => toml::Value::Boolean(match text {
                 "true" | "on" | "yes" => true,
@@ -138,7 +136,7 @@ pub fn parse_change(
 }
 
 /// The values vanilla uses for the numbers it clamps (`ChunkMap` keeps both distances within 2 to 32).
-fn range(section: &str, field: &str) -> Option<std::ops::RangeInclusive<i64>> {
+pub(crate) fn range(section: &str, field: &str) -> Option<std::ops::RangeInclusive<i64>> {
     match (section, field) {
         ("server", "view_distance" | "simulation_distance") => Some(2..=32),
         ("server", "max_view_distance") => Some(0..=32),
@@ -253,6 +251,11 @@ pub fn apply(
 /// The settings the control API may change: none of `[engine]` (which program runs), `[panel]` and `[api]`
 /// (who can reach the server), `[discord]` (its webhook is a secret), nor the vanilla keys that open another remote console.
 pub fn changeable_remotely(key: &str) -> bool {
+    // Checked as written, but applied trimmed (parse_change): a key with any space in it,
+    // " engine.path" for one, would pass here as another section and be written as itself.
+    if key.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return false;
+    }
     let (section, field) = key.split_once('.').unwrap_or((key, ""));
     !matches!(section, "engine" | "panel" | "api" | "discord")
         && !(section == "properties"
@@ -279,6 +282,23 @@ pub fn shown(dir: &Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keys_the_api_may_not_change_stay_refused_however_spaced() {
+        for key in [
+            "engine.path",
+            " engine.path",
+            "\tapi.allow_public",
+            "discord.webhook ",
+            " properties.enable-rcon",
+            "properties. rcon.password",
+            "panel\n.allow_public",
+        ] {
+            assert!(!changeable_remotely(key), "{key:?}");
+        }
+        assert!(changeable_remotely("world.difficulty"));
+        assert!(changeable_remotely("properties.motd"));
+    }
 
     fn table() -> toml::Table {
         toml::Table::try_from(config::Config::default()).unwrap()

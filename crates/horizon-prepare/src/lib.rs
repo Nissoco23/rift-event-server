@@ -193,7 +193,7 @@ pub(crate) fn hold_lock(dir: &Path, log: Log) -> Result<PreparationLock, String>
         Ok(()) => {}
         Err(fs::TryLockError::WouldBlock) => {
             log(&format!(
-                "Waiting for another horizon-prepare to finish with {}",
+                "Waiting for another rift-prepare to finish with {}",
                 dir.display()
             ));
             file.lock().map_err(error)?;
@@ -743,10 +743,7 @@ fn prepare_impl(
     })?;
     if !compile_only {
         progress(1.0);
-        log(&format!(
-            "Prepared Horizon native-client resources: {}",
-            result.display()
-        ));
+        log(&format!("Prepared the game files: {}", result.display()));
     }
     log(&format!("Done{}", took(started)));
     Ok(result)

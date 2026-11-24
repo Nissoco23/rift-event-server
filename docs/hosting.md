@@ -5,6 +5,14 @@ program, no Java, one settings file, a command line, and a web panel. Vanilla 26
 can join it. This page covers what works on `main` today and says plainly what doesn't yet. The design and the
 plan are in [server.md](server.md).
 
+> **Rift Event Server.** This guide was written for Horizon's releases. Here, read `horizon-server` as
+> `rift-server`, `horizon-prepare` as `rift-prepare` and `horizon-engine` as `rift-engine`
+> ([rift-naming.md](rift-naming.md)). This fork has no release archives, install scripts or update channel: skip
+> "1. Install" and the `update` and `rollback` commands, build with `scripts/build.sh` as
+> [the README](../README.md) says, and treat "Docker" as not adapted yet. For a hosting panel use
+> [Rift on Pterodactyl](#rift-on-pterodactyl) below, not the Horizon egg. What the guide
+> says about `server.toml`, the commands, the panel, the API, backups and Velocity applies as written.
+
 ## Before you start
 
 - **Online mode checks accounts** (release v2026.10.17.07 and newer). With `online_mode = true`, the
@@ -82,7 +90,8 @@ horizon-prepare --prepare --server-jar /path/to/server.jar
 ```
 
 Add `--minecraft-dir PATH` if your launcher keeps the game elsewhere. The prepared files go to
-`game-files`, which updates keep.
+`game-files`, which updates keep. With Prism Launcher or MultiMC, which keep no server jar, use `--prism-dir`
+instead of `--server-jar`: [the README](../README.md#prepare-the-game-files-once-per-machine) has the command.
 
 **On a headless machine** (a VPS, a home server), prepare on your own computer instead, with the launcher or
 `horizon-prepare`, and copy the prepared `26.3` folder to the server with `horizon-server import-resources DIR` (it checks the
@@ -366,12 +375,12 @@ share of the tick (`level_*`), what each mob type costs per dimension (one tick 
 tick, mobs, µs a mob), the chunk workers' CPU by job (load, generate, decorate, finish, light), the network bytes
 a player sends and receives, and what recording cost the tick (measured, usually well under 1 % of MSPT). They
 hold no names, UUIDs or addresses, so you can attach them to an issue as they are. On the console it is
-`horizon-report [SECONDS]`; `horizon-report stop` writes the report now and `horizon-report status` says how far
+`rift-report [SECONDS]`; `rift-report stop` writes the report now and `rift-report status` says how far
 it is. Nothing restarts: the report runs beside the game.
 
-To see a slow stretch tick by tick, `horizon-trace [SECONDS]` (30 by default, up to 300) writes every thread's timed
+To see a slow stretch tick by tick, `rift-trace [SECONDS]` (30 by default, up to 300) writes every thread's timed
 steps to `reports/trace-<time>.json`; [ui.perfetto.dev](https://ui.perfetto.dev) opens it as a timeline, one row per
-thread. `horizon-trace stop` ends it early. It holds step names and times only.
+thread. `rift-trace stop` ends it early. It holds step names and times only.
 
 Between reports, the log keeps the spikes: a tick slower than 250 ms writes a `Horizon: slow tick` line with
 its phases (`HORIZON_SPIKES=MS` in the engine's environment sets another threshold), and a server more than
@@ -552,6 +561,31 @@ settings are read when the server starts. To turn it off again, set `enable-quer
 Where it differs from vanilla: while the game isn't running (starting, restarting) nothing answers, and who is
 online is read from the game at most once a second.
 
+## Voice chat
+
+Players who have the [Simple Voice Chat](https://modrinth.com/plugin/simple-voice-chat) mod (version **2.6**) on their
+client can talk to the players near them, and in groups. Nothing else changes: players without the mod play as before.
+The server runs the `voicechat` mod of `rift-mods/` ([README](../rift-mods/voicechat/README.md)), on by default.
+
+It needs one more port than the game: **UDP 24454**, which the voice goes over. Open it (UDP) in the machine's firewall
+(behind a proxy with the plugin, to the proxy only: see `voice-host` below).
+`config/voicechat.toml` (written on the first start) has the rest:
+
+- `port`: the UDP port. Panels (Pterodactyl): allocate one more port to the server and put it in the egg's
+  **Voice chat port** variable.
+- `voice-host`: the address the players' clients send their voice to. Empty means the address they play on.
+  **Behind a Velocity proxy that runs the Simple Voice Chat plugin, leave it empty**: the plugin sniffs the secret
+  this server sends, points the clients at the proxy (its own `port` and `voice_host`) and bridges their voice to this
+  server's UDP `port`, at the address Velocity knows the server by, so only the proxy's voice port has to be open to
+  players and this one to the proxy. Behind a proxy without the plugin the clients would send their voice to the proxy,
+  where nothing listens: set it to this server's own public address, as `host` or `host:port`. On Pterodactyl, the
+  **Voice chat host** variable.
+- `max-voice-distance`, `whisper-distance`, `groups`, `spectators-talk-to-players` and the rest: see the file.
+
+`/voicechat status` (operators, the console) says whether it runs and who is connected. The log says `Voice chat server
+started at ...` at the first tick, or why not (a port that is taken). A player whose Simple Voice Chat is another
+version is told in chat to install 2.6.
+
 ## 7. Backups
 
 ```sh
@@ -562,7 +596,7 @@ horizon-server restore before-the-update
 
 A backup zips the world, vanilla's files and `server.toml` into `backups/`. A running server saves first and
 stays up: players don't notice. Automatic backups run on the `[backups] every` schedule while the server runs,
-and the oldest automatic ones beyond `keep` are deleted. Backups you make by hand are never deleted.
+and the oldest automatic ones beyond `keep` (1 to 1000) are deleted. Backups you make by hand are never deleted.
 
 `restore` takes a backup's file name, a unique start of it, or the name you gave it. It moves the current
 world aside to `backups/replaced-<time>/` (never deleted), puts the backup in place, and restarts the server if
@@ -620,7 +654,8 @@ Players join with any vanilla 26.3 client: only the server decides the damage.
 horizon-server service install
 ```
 
-- **Linux:** a systemd user unit (`--system` for a system unit, with sudo). To keep a user unit running while
+- **Linux:** a systemd user unit (`--system` for a system unit, with sudo from your own account: the unit runs
+  the server as that account, never as root). To keep a user unit running while
   you're logged out: `loginctl enable-linger $USER`.
 - **macOS:** a launchd agent in `~/Library/LaunchAgents`.
 - **Windows:** a task that starts at logon (a real Windows service comes later).
@@ -629,7 +664,31 @@ The service runs `horizon-server run` through the installed `current` release, s
 next restart. `service print` shows what it would install, `service uninstall` removes it and leaves the server
 folder alone.
 
-## Hosting panels (Pterodactyl, AMP)
+## Rift on Pterodactyl
+
+Linux x86-64 only. Three parts, all in `packaging/rift/` and `.github/workflows/linux-build.yml`:
+
+1. **The build.** The *Linux build* workflow compiles `rift-server` and `rift-engine` (release profile) on every
+   push to `dev` and publishes them as the `nightly` pre-release (`rift-server-linux-x86_64.tar.gz` and its
+   `.sha256`); pushing a tag `v*` publishes a release of that name. The build holds nothing of Mojang's.
+2. **The egg.** In the panel: Nests, Import Egg, `packaging/rift/pterodactyl-egg.json`. It uses the image
+   `ghcr.io/ptero-eggs/yolks:debian`. Its install script downloads the release named by the *Rift release*
+   variable (`nightly` or a tag), checks it against the published SHA-256 and unpacks `start.sh` and `rift/`
+   into the server folder: it touches no world, settings or game files, so a reinstall is how you update.
+   `start.sh` writes `server.toml` on the first start from the egg's variables (EULA, online mode, whitelist,
+   players, operator, world, seed); the port always follows the panel's allocation. Afterwards edit `server.toml`.
+   The panel's Stop sends `stop`, which saves the world first.
+   The egg is generated from `packaging/rift/install.sh` by `tools/make_egg.py` (`--check` tells whether it is
+   up to date).
+3. **What you upload by hand.**
+   - The prepared game files (step 2), from your own Minecraft 26.3: into `resources/` in the server's files.
+   - Behind a Velocity proxy: set *Online mode* to `false` before the first start and put the proxy's
+     `forwarding.secret` in the server folder ([Behind a Velocity proxy](#behind-a-velocity-proxy)).
+   - To keep your settings and world: `world/` and `config/` (the mods' settings, the nick pool) from `dist/`.
+
+Set the EULA variable to `true` before the first start: until then the server stops and says why.
+
+## Hosting panels (Pterodactyl, AMP): Horizon's egg
 
 The egg installs the server build of the current Nightly (nothing of Mojang's) and runs `horizon-server`
 through `packaging/server/panel-start.sh`: the first start writes `server.toml` from the panel's settings, and the

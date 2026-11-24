@@ -3,6 +3,8 @@ name = "horizon-command"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
 rust-version.workspace = true
 description = "Commands (Brigadier): the vanilla command tree, argument types, selectors, parsing, suggestions and the network form of the tree"
 

@@ -11,13 +11,13 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 const LAUNCHER_HINT: &str =
-    "Horizon does not download the game: play {version} once in the launcher you play \
-Minecraft Java Edition with so it downloads the game's files, then rerun. Horizon reads the \
-official launcher's folder, ATLauncher's and the CurseForge app's; for Prism Launcher, MultiMC, \
-the Modrinth App or GDLauncher, prepare from the Horizon launcher, which finds their files. If your launcher keeps \
+    "Rift does not download the game: play {version} once in the launcher you play \
+Minecraft Java Edition with so it downloads the game's files, then rerun. Rift reads the \
+official launcher's folder, ATLauncher's and the CurseForge app's; for Prism Launcher or MultiMC, \
+pass --prism-dir. If your launcher keeps \
 them in another folder, pass --minecraft-dir or set HORIZON_MINECRAFT_DIR, or name the files with \
 --version-json, --client-jar, --libraries-dir and --assets-dir.";
-const SERVER_HINT: &str = "Horizon does not download the game: download the {version} server jar yourself (minecraft.net/download/server \
+const SERVER_HINT: &str = "Rift does not download the game: download the {version} server jar yourself (minecraft.net/download/server \
 while {version} is the current release, otherwise the downloads.server.url in your launcher's \
 versions/{version}/{version}.json), then pass --server-jar PATH or set HORIZON_SERVER_JAR.";
 
@@ -741,10 +741,9 @@ pub(crate) fn import_manifest(lock: &Lock, files: &GameFiles) -> Result<Value, S
             let pinned = lock.pin("manifest_sha1")?;
             if !(destination.exists() && lock.manifest_accepted(&digest(&destination, "sha1")?)) {
                 return Err(format!(
-                    "{} is not a {version} version file Horizon knows (sha1 {checksum}): your \
-                     launcher may have rewritten it, or Mojang republished it. Prepare from the \
-                     Horizon launcher, which downloads Mojang's own, or save \
-                     https://piston-meta.mojang.com/v1/packages/{pinned}/{version}.json as {} \
+                    "{} is not a {version} version file Rift knows (sha1 {checksum}): your \
+                     launcher may have rewritten it, or Mojang republished it. Save Mojang's own \
+                     copy, https://piston-meta.mojang.com/v1/packages/{pinned}/{version}.json, as {} \
                      and prepare again.",
                     source.display(),
                     destination.display()
@@ -830,6 +829,14 @@ fn os_release() -> String {
     String::new()
 }
 
+/// Whether a rule's `os.name` is this machine. Prism Launcher's metadata names Apple Silicon
+/// natives `osx-arm64` and leaves plain `osx` to Intel Macs (its other ARM names have the same
+/// `<os>-arm64` form), so an ARM machine matches its own OS name and that one.
+fn os_name_matches(name: &str, system: &str) -> bool {
+    name == system
+        || (rule_architectures().contains(&"arm64") && name.strip_prefix(system) == Some("-arm64"))
+}
+
 /// The official launcher's rules: the last matching rule decides, no rules means allowed.
 fn library_allowed(library: &Value) -> Result<bool, String> {
     let system = rule_system();
@@ -842,7 +849,10 @@ fn library_allowed(library: &Value) -> Result<bool, String> {
     for rule in rules {
         let empty = Value::Object(Vec::new());
         let os = rule.get("os").unwrap_or(&empty);
-        if os.get("name").and_then(Value::as_str).unwrap_or(system) != system {
+        if !os_name_matches(
+            os.get("name").and_then(Value::as_str).unwrap_or(system),
+            system,
+        ) {
             continue;
         }
         if let Some(arch) = os.get("arch") {
@@ -883,11 +893,24 @@ fn classifier_ends_with(classifier: &str, names: &[&str]) -> bool {
 }
 
 /// Modern manifests list x64 and ARM natives with OS-only rules; keep this machine's. A plain
-/// natives-<os> jar is the x64 build when the manifest also lists an ARM variant of it.
+/// natives-<os> jar is the x64 build when the manifest also lists an ARM variant of it. Mojang
+/// names a native `group:artifact:version:natives-macos`; Prism Launcher folds the classifier into
+/// the artifact, `group:artifact-natives-macos:version`, and names the ARM sibling
+/// `group:artifact-natives-macos-arm64:version`.
 fn native_library_matches(library: &Value, names: &[&str]) -> bool {
     let arm = rule_architectures().contains(&"arm64");
     let name = library.get("name").and_then(Value::as_str).unwrap_or("");
-    let classifier = name.split(':').nth(3).unwrap_or("");
+    let parts: Vec<&str> = name.split(':').collect();
+    let classifier = match parts[..] {
+        [_, artifact, _] => artifact
+            .find("-natives-")
+            .map_or("", |at| &artifact[at + 1..]),
+        _ => parts.get(3).copied().unwrap_or(""),
+    };
+    let arm_build = |suffix: &str| match parts[..] {
+        [group, artifact, version] => format!("{group}:{artifact}-{suffix}:{version}"),
+        _ => format!("{name}-{suffix}"),
+    };
     if classifier_ends_with(classifier, &["arm64", "aarch64", "aarch_64"]) {
         return arm;
     }
@@ -897,7 +920,7 @@ fn native_library_matches(library: &Value, names: &[&str]) -> bool {
     if arm && classifier.starts_with("natives-") {
         return !["arm64", "aarch64"]
             .iter()
-            .any(|suffix| names.contains(&format!("{name}-{suffix}").as_str()));
+            .any(|suffix| names.contains(&arm_build(suffix).as_str()));
     }
     true
 }
@@ -2313,6 +2336,50 @@ mod tests {
             !arm
         );
         assert!(native_library_matches(&lib("a:b:1"), &names));
+    }
+
+    /// Prism Launcher names a native `group:artifact-natives-macos:version`, its Apple Silicon
+    /// build `...-natives-macos-arm64`, and marks that build's rule `osx-arm64`, leaving plain
+    /// `osx` to Intel Macs. A machine takes its own build and no other: Prism never downloads the
+    /// rest, so asking for it fails the preparation (the jtracy and LWJGL natives of a 26.3 install).
+    #[test]
+    fn prism_natives_follow_the_architecture() {
+        let arm = cfg!(target_arch = "aarch64");
+        let system = rule_system();
+        let native = |name: &str, os: &str| {
+            format!(
+                r#"{{"name":"{name}","downloads":{{"artifact":{{"sha1":"0","size":1,"url":"https://example.invalid/n.jar"}}}},"rules":[{{"action":"allow","os":{{"name":"{os}"}}}}]}}"#
+            )
+        };
+        let plain = r#"{"name":"org.plain:lib:1","downloads":{"artifact":{"sha1":"0","size":1,"url":"https://example.invalid/p.jar"}}}"#;
+        let arm_os = format!("{system}-arm64");
+        let manifest = pyjson::loads(&format!(
+            r#"{{"libraries":[{plain},{},{},{},{}]}}"#,
+            native("com.mojang:jtracy-natives-macos:1.14.38", system),
+            native("com.mojang:jtracy-natives-macos-arm64:1.14.38", &arm_os),
+            native("org.lwjgl:lwjgl-natives-macos:3.4.3", system),
+            native("org.lwjgl:lwjgl-natives-macos-arm64:3.4.3", &arm_os),
+        ))
+        .unwrap();
+        let chosen: Vec<&str> = client_library_artifacts(&manifest)
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let expected: &[&str] = if arm {
+            &[
+                "org.plain:lib:1",
+                "com.mojang:jtracy-natives-macos-arm64:1.14.38",
+                "org.lwjgl:lwjgl-natives-macos-arm64:3.4.3",
+            ]
+        } else {
+            &[
+                "org.plain:lib:1",
+                "com.mojang:jtracy-natives-macos:1.14.38",
+                "org.lwjgl:lwjgl-natives-macos:3.4.3",
+            ]
+        };
+        assert_eq!(chosen, expected);
     }
 
     #[test]

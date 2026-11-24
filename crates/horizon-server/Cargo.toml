@@ -3,8 +3,10 @@ name = "horizon-server"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
+repository.workspace = true
 rust-version.workspace = true
-description = "Host a Horizon server: server.toml, the CLI and the supervisor that runs the game headless (docs/server.md)"
+description = "Rift Event Server's supervisor (rift-server): server.toml, the CLI and the supervisor that runs the game headless (docs/server.md)"
 
 [dependencies]
 # The engine, through the platform's public API (docs/layers.md): server.properties and the user lists, the

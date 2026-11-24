@@ -309,7 +309,7 @@ impl VanillaTerrain {
             if !dir.join("blocks/block-properties.nbt").exists() {
                 log::warn!(
                     "Horizon: the worldgen bundle lacks the block behavior exports (worldgen/blocks/*.nbt); \
-                     prepare again (the launcher, or horizon-prepare --prepare) to add them"
+                     prepare again (rift-prepare --prepare) to add them"
                 );
             }
         }

@@ -529,15 +529,22 @@ impl Game<'_> {
             |v| v.wrapping_add(1),
         );
     }
-    /// `ServerPlayer.awardKillScore`: total kills and the team kill counts.
+    /// `ServerPlayer.awardKillScore`: total kills, the player kills and the
+    /// team kill counts, for the victim `victim`.
     pub(super) fn score_player_killed(&mut self, victim: Target) {
-        let victim_name = self.holder_name(victim);
+        let name = self.holder_name(victim);
+        self.score_player_killed_named(name, matches!(victim, Target::Player | Target::Guest(_)));
+    }
+    /// [`score_player_killed`](Self::score_player_killed) with the victim's
+    /// scoreboard name at hand: a guest's record is out of `self.lan` during
+    /// its turn (`ServerPlayer.die` runs there).
+    pub(super) fn score_player_killed_named(&mut self, victim_name: Option<String>, player: bool) {
         let display = self.player_display_comp();
         let me = self.acting_player_name().to_owned();
         let board = &mut self.score.board;
         let inc = |v: i32| v.wrapping_add(1);
         board.for_all_objectives_with(sb::CRITERIA_TOTAL_KILLS, &me, Some(&display), inc);
-        if victim == Target::Player {
+        if player {
             board.for_all_objectives_with(sb::CRITERIA_PLAYER_KILLS, &me, Some(&display), inc);
         }
         let color_of =

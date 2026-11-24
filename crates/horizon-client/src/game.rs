@@ -302,6 +302,7 @@ mod native_level_world;
 mod native_lifecycle;
 mod native_living_refs;
 mod native_machines;
+mod native_membership;
 mod native_menu_stacks;
 mod native_menus;
 mod native_mob_draw;
@@ -342,6 +343,7 @@ pub mod native_world_draw;
 mod native_world_edit;
 mod native_world_read;
 mod native_world_seed;
+mod native_world_spawn;
 mod natural_spawning;
 mod nautili;
 mod net_harness;
@@ -2492,8 +2494,8 @@ struct Game<'a> {
     /// `getUseDuration` when that use started, as a mod left it
     /// (`game/item_use.rs`): consumables and mod items count to it.
     use_duration: i32,
-    /// A mod's `Start` or `Tick` set that use's ticks left (`game/item_use.rs`).
-    use_ticks_set: bool,
+    /// What that use began with (`useItem`) and whether a mod set its ticks left (`item_use.rs`).
+    use_start: using_item::UseStart,
     /// The crossbow charge's start and middle loading sounds played so far
     /// (`game/crossbow.rs`): each charge plays each of them once, however
     /// far a mod's tick moved the charge at a time.
@@ -3058,6 +3060,12 @@ struct Game<'a> {
     lan_acting_name: Option<String>,
     /// Their UUID (`Player.getUUID`).
     lan_acting_uuid: Option<u128>,
+    /// The nicknames mods gave the players (`native_set_nickname`), by UUID: a copy of the
+    /// hub's (`Hub::nicknames`), here for the reason `guest_attachments` is: while a guest
+    /// acts the hub is out of `self.lan`, and the lines their turn writes (a death, an
+    /// advancement, command feedback) must still name every player as the others know them.
+    /// Dropped once the player's leave has been handled.
+    nicknames: HashMap<u128, String>,
     /// The player and the stack on their cursor as they clicked a native
     /// menu, while `native_menu_clicked` hears it (`native_menu_cursor`).
     native_click_cursor: Option<(u128, Option<horizon_client::items::ItemStack>)>,
@@ -3189,6 +3197,20 @@ fn death_drops(
     let mut stacks: Vec<ItemStack> = inventory.iter_mut().filter_map(Option::take).collect();
     stacks.extend(offhand.take());
     stacks.extend(armor.iter_mut().rev().filter_map(Option::take));
+    stacks.retain(|s| s.enchantment_level("minecraft:vanishing_curse") == 0);
+    stacks
+}
+
+/// What a player holds, as [`death_drops`] lists it, without taking it from them (the vanishing
+/// curse's items are not copied): what a death that keeps the inventory and drops it too throws.
+fn death_copies(
+    inventory: &[Option<ItemStack>],
+    offhand: &Option<ItemStack>,
+    armor: &[Option<ItemStack>],
+) -> Vec<ItemStack> {
+    let mut stacks: Vec<ItemStack> = inventory.iter().flatten().cloned().collect();
+    stacks.extend(offhand.iter().cloned());
+    stacks.extend(armor.iter().rev().flatten().cloned());
     stacks.retain(|s| s.enchantment_level("minecraft:vanishing_curse") == 0);
     stacks
 }
@@ -3618,11 +3640,11 @@ impl Game<'_> {
         player.item_use_slows_sprint = item_use_slows_sprint;
         player.respiration = respiration;
         player.glider = glider;
-        // On someone else's server the glide flag is the server's
-        // (`DATA_SHARED_FLAGS_ID`, applied by the SetEntityData handler); the
-        // game's own integrated server has no such round trip, so the client
-        // keeps predicting the clear a tick after the landing glide.
-        player.server_owns_glide = self.integrated.is_none();
+        // A client of a server, the window's own integrated one included, takes
+        // the glide's end from the server's flag alone (`DATA_SHARED_FLAGS_ID`,
+        // applied by the SetEntityData handler): vanilla's LocalPlayer never
+        // ends a glide itself.
+        player.server_owns_glide = self.remote.is_some();
         let _ = player.set_sleeping(sleeping);
         player.leather_boots = leather_boots;
         player.freeze_immune = freeze_immune;
@@ -4102,15 +4124,18 @@ impl Game<'_> {
     /// everywhere.
     fn update_chunk_tickets(&mut self) {
         let rule = self.ui.rules.bool("spectators_generate_chunks");
-        let mut players: Vec<((i32, i32), bool)> = self.lan.as_ref().map_or_else(Vec::new, |h| {
-            h.hub
-                .guests
-                .iter()
-                .filter(|g| h.hub.here(g))
-                .filter(|g| !g.fake) // fake players hold small forced tickets below
-                .map(|g| (g.chunk(), g.spectator()))
-                .collect()
-        });
+        // Each player's chunk, whether they are a spectator, and the distance a native mod has capped
+        // their tickets at, if it has (None: the server's view and simulation distances).
+        let mut players: Vec<((i32, i32), bool, Option<i32>)> =
+            self.lan.as_ref().map_or_else(Vec::new, |h| {
+                h.hub
+                    .guests
+                    .iter()
+                    .filter(|g| h.hub.here(g))
+                    .filter(|g| !g.fake) // fake players hold small forced tickets below
+                    .map(|g| (g.chunk(), g.spectator(), h.hub.capped_distance(g)))
+                    .collect()
+            });
         if let Some(p) = &self.player {
             players.push((
                 (
@@ -4118,6 +4143,7 @@ impl Game<'_> {
                     (p.position.z.floor() as i32) >> 4,
                 ),
                 self.spectator(),
+                None,
             ));
         }
         // A spectator the rule skips is still a player: a game that has one
@@ -4126,9 +4152,16 @@ impl Game<'_> {
         let sources = (!self.options.execution_role.is_client() || any_player).then(|| {
             horizon_client::ticket_levels::Sources {
                 players: players
-                    .into_iter()
-                    .filter(|&(_, spectator)| game_mode::loads_chunks(rule, spectator))
-                    .map(|(chunk, _)| chunk)
+                    .iter()
+                    .filter(|&&(_, spectator, capped)| {
+                        capped.is_none() && game_mode::loads_chunks(rule, spectator)
+                    })
+                    .map(|&(chunk, _, _)| chunk)
+                    .collect(),
+                limited: players
+                    .iter()
+                    .filter(|&&(_, spectator, _)| game_mode::loads_chunks(rule, spectator))
+                    .filter_map(|&(chunk, _, capped)| capped.map(|distance| (chunk, distance)))
                     .collect(),
                 // A native mod's ticket holds its chunk as `/forceload` does
                 // (NeoForge's `TicketController` uses the same `FORCED` level).
@@ -7591,7 +7624,7 @@ impl Game<'_> {
             .is_some_and(|w| w.preset == horizon_client::save::WorldPreset::Flat);
         self.world_debug = horizon_client::save::WorldGen::read(&save_root)
             .is_some_and(|w| w.preset == horizon_client::save::WorldPreset::Debug);
-        self.block_ticks = Ticks::new(self.level.seed as i32);
+        self.block_ticks = self.levels.new_ticks(self.level.seed as i32);
         self.tick_chunks.clear();
         self.clear_entities();
         self.player = None;
@@ -11778,7 +11811,7 @@ impl<'a> Game<'a> {
             },
             using: None,
             use_duration: 0,
-            use_ticks_set: false,
+            use_start: Default::default(),
             crossbow_sounds: [false; 2],
             view: Default::default(),
             limiter: horizon_client::window::FramerateLimiter::new(0),
@@ -12083,6 +12116,7 @@ impl<'a> Game<'a> {
             guest_player_sounds: Vec::new(),
             lan_acting_name: None,
             lan_acting_uuid: None,
+            nicknames: HashMap::new(),
             native_click_cursor: None,
             tnt_refused: None,
             lan_acting_permission: None,
@@ -12697,13 +12731,13 @@ fn reset_world_progress(adv: &mut advancements::AdvState, stats: &mut stats::Sta
 }
 
 #[cfg(test)]
-mod startup_cpu_tests;
-
+mod entity_model_loading_tests;
+#[cfg(test)]
+mod player_kill_credit_tests;
 #[cfg(test)]
 mod runtime_reset_tests;
-
 #[cfg(test)]
-mod entity_model_loading_tests;
+mod startup_cpu_tests;
 
 /// `LocalPlayer.moveTowardsClosestSpace` at the body's four corners (aiStep, unless a spectator or a
 /// passenger): a corner inside a suffocating block sets a 0.1 speed towards the nearest side that is

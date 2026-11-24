@@ -67,6 +67,11 @@ pub trait ServerDamageEnvironment<A: HealthAttributes = EntityAttributes>:
     fn damage_pre(&mut self, _damage: &mut f32) -> Result<(), EnvError<Self>> {
         Ok(())
     }
+    /// [`Self::damage_pre`], told the player's health as the hit finds it (before any of it
+    /// comes off). The default ignores it.
+    fn damage_pre_at(&mut self, _health: f32, damage: &mut f32) -> Result<(), EnvError<Self>> {
+        self.damage_pre(damage)
+    }
     /// [`DamageWorld::damage_post`]. The default does nothing.
     fn damage_post(&mut self, _damage: f32) -> Result<(), EnvError<Self>> {
         Ok(())
@@ -306,8 +311,9 @@ impl<A: HealthAttributes, E: ServerDamageEnvironment<A>> DamageWorld
             .map_err(ServerDamageError::Environment)
     }
     fn damage_pre(&mut self, damage: &mut f32) -> Result<(), Self::Error> {
+        let health = self.health()?;
         self.environment
-            .damage_pre(damage)
+            .damage_pre_at(health, damage)
             .map_err(ServerDamageError::Environment)
     }
     fn damage_post(&mut self, damage: f32) -> Result<(), Self::Error> {

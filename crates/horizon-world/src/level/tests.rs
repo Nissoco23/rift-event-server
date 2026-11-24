@@ -532,6 +532,90 @@ fn neighbor_observation_follows_dispatch_order() {
     );
 }
 
+/// Two floating redstone wires in a row, at (1, 64, 0) and (2, 64, 0), and a
+/// stone changed at (0, 64, 0) whose neighbours are notified, with `max` as the
+/// level's chained neighbour update limit (`None`: the default). A wire breaks
+/// when an update reaches it (`RedStoneWireBlock.neighborChanged`, no support
+/// below); the second only breaks if the first's removal is allowed to update
+/// its own neighbours in turn. Tells which of the two broke.
+fn wires_broken_by_updates(f: &Fixture, max: Option<i32>) -> (bool, bool) {
+    let mut w = World::new(f);
+    if let Some(max) = max {
+        w.ticks.set_max_chained_neighbor_updates(max);
+    }
+    let wire = w.id("redstone_wire", &[]);
+    let (first, second) = (BlockPos::new(1, 64, 0), BlockPos::new(2, 64, 0));
+    w.put(first, wire);
+    w.put(second, wire);
+    let stone = w.b().table.block_by_name("minecraft:stone").unwrap();
+    w.b()
+        .update_neighbors_at(&mut w.level, &mut w.ticks, BlockPos::new(0, 64, 0), stone);
+    (w.get(first) != wire, w.get(second) != wire)
+}
+
+/// `CollectingNeighborUpdater.addAndRun` drops an update as too many only when
+/// `maxChainedNeighborUpdates >= 0 && count >= maxChainedNeighborUpdates`, and
+/// the count restarts at 0 when a chain ends. The dedicated server's
+/// `max-chained-neighbor-updates` is that limit: 0 lets no update through, 1
+/// lets the first notification through and drops what it sets off, a negative
+/// value is no limit.
+#[test]
+fn max_chained_neighbor_updates_limits_a_chain_and_a_negative_value_lifts_it() {
+    let Some(f) = fixture() else { return };
+    assert_eq!(wires_broken_by_updates(f, None), (true, true), "default");
+    assert_eq!(wires_broken_by_updates(f, Some(-1)), (true, true), "-1");
+    assert_eq!(wires_broken_by_updates(f, Some(1)), (true, false), "1");
+    assert_eq!(wires_broken_by_updates(f, Some(0)), (false, false), "0");
+}
+
+/// `CollectingNeighborUpdater.addAndRun` logs once per chain, when the count
+/// first passes the limit, naming the position of the first update it drops:
+/// `Too many chained neighbor updates. Skipping the rest. First skipped
+/// position: 1, 63, 0` (`BlockPos.toShortString`). With the limit 1 the first
+/// notification (of the stone's neighbours) is let through and the first wire
+/// breaks. Its removal (`RedStoneWireBlock.affectNeighborsAfterRemoval`, run by
+/// `LevelChunk.setBlockState` before `Level.setBlock` updates the neighbours)
+/// notifies the neighbours of each of its own neighbours in `Direction.values()`
+/// order, the one below first: that, at (1, 63, 0), is the first update dropped;
+/// the ones after it are dropped without a line.
+#[test]
+fn passing_max_chained_neighbor_updates_logs_one_error_with_the_first_skipped_position() {
+    struct Lines(std::sync::Mutex<Vec<(std::thread::ThreadId, String)>>);
+    impl log::Log for Lines {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() == log::Level::Error
+        }
+        fn log(&self, record: &log::Record) {
+            if self.enabled(record.metadata()) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((std::thread::current().id(), record.args().to_string()));
+            }
+        }
+        fn flush(&self) {}
+    }
+    static LINES: Lines = Lines(std::sync::Mutex::new(Vec::new()));
+    let Some(f) = fixture() else { return };
+    log::set_logger(&LINES).expect("no other test installs a logger");
+    log::set_max_level(log::LevelFilter::Error);
+    wires_broken_by_updates(f, Some(1));
+    // Only this test's thread: the tests of the crate run side by side.
+    let me = std::thread::current().id();
+    let mine: Vec<String> = LINES
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(thread, _)| *thread == me)
+        .map(|(_, line)| line.clone())
+        .collect();
+    assert_eq!(
+        mine,
+        ["Too many chained neighbor updates. Skipping the rest. First skipped position: 1, 63, 0"]
+    );
+}
+
 /// `WeatheringCopperChestBlock.randomTick`: a copper chest someone has open
 /// skips `changeOverTime` and its draws; a closed one draws (#11378).
 #[test]
@@ -3251,6 +3335,82 @@ fn water_douses_a_lit_campfire_with_the_extinguish_sound() {
         )),
         "the extinguish sound"
     );
+    // `douse(null, level, pos, state)` ends with
+    // `level.gameEvent(null, GameEvent.BLOCK_CHANGE, pos)`, so a sculk sensor
+    // hears the fire go out.
+    assert!(
+        w.level.events.iter().any(|e| matches!(
+            e,
+            LevelEvent::GameEvent {
+                event: "minecraft:block_change",
+                pos,
+                ..
+            } if *pos == at
+        )),
+        "the block-change game event"
+    );
+}
+
+#[test]
+fn water_douses_a_lit_candle_with_the_candle_sound() {
+    // CandleBlock.placeLiquid: a lit candle that takes water runs
+    // `AbstractCandleBlock.extinguish` with the new waterlogged state, which
+    // sets it unlit, plays CANDLE_EXTINGUISH and posts BLOCK_CHANGE.
+    let mut w = world!();
+    let at = BlockPos::new(0, 1, 0);
+    w.put(at, w.id("candle", &[("lit", "true")]));
+    w.level.events.clear();
+    let placed = w.f.behaviours.bucket_empty(
+        &mut w.level,
+        &mut w.ticks,
+        at,
+        None,
+        BucketContent::Fluid(crate::fluid::FluidKind::Water),
+        "minecraft:item.bucket.empty",
+        false,
+        false,
+    );
+    assert_eq!(placed, Some(at));
+    assert_eq!(w.prop(at, "lit"), "false");
+    assert_eq!(w.prop(at, "waterlogged"), "true");
+    assert!(
+        w.level.events.iter().any(|e| matches!(
+            e,
+            LevelEvent::Sound { sound, .. } if &**sound == "minecraft:block.candle.extinguish"
+        )),
+        "the candle extinguish sound"
+    );
+    assert!(
+        w.level.events.iter().any(|e| matches!(
+            e,
+            LevelEvent::GameEvent {
+                event: "minecraft:block_change",
+                pos,
+                ..
+            } if *pos == at
+        )),
+        "the block-change game event"
+    );
+    // A candle that is already out (no extinguish) posts no such event.
+    w.put(at, w.id("candle", &[("lit", "false")]));
+    w.level.events.clear();
+    w.f.behaviours.bucket_empty(
+        &mut w.level,
+        &mut w.ticks,
+        at,
+        None,
+        BucketContent::Fluid(crate::fluid::FluidKind::Water),
+        "minecraft:item.bucket.empty",
+        false,
+        false,
+    );
+    assert!(!w.level.events.iter().any(|e| matches!(
+        e,
+        LevelEvent::GameEvent {
+            event: "minecraft:block_change",
+            ..
+        }
+    )));
 }
 
 #[test]
@@ -4173,3 +4333,69 @@ fn fresh_chunk_block_events_do_not_wait_for_ticking_readiness() {
 
 mod barrel;
 mod trigger_tests;
+
+/// `ShulkerBoxBlockEntity.doNeighborUpdates`: the neighbours' shape updates
+/// (flag 3) and then their `neighborChanged`, at the four points in
+/// `ShulkerBoxBlockEntity.tick` where a lid starts or finishes moving.
+#[test]
+fn a_shulker_lid_updates_the_shapes_and_redstone_of_its_neighbours() {
+    use std::cell::RefCell;
+
+    struct Observer {
+        inner: TestLevel,
+        seen: RefCell<Vec<(BlockPos, BlockStateId, BlockId, bool)>>,
+    }
+    impl LevelAccess for Observer {
+        fn block_state(&self, pos: BlockPos) -> BlockStateId {
+            self.inner.block_state(pos)
+        }
+        fn set_raw(&mut self, pos: BlockPos, state: BlockStateId) -> Option<BlockStateId> {
+            self.inner.set_raw(pos, state)
+        }
+        fn is_loaded(&self, _pos: BlockPos) -> bool {
+            true
+        }
+        fn random(&mut self) -> &mut LegacyRandom {
+            self.inner.random()
+        }
+        fn game_time(&self) -> i64 {
+            self.inner.game_time()
+        }
+        fn observe_neighbor_changed(
+            &self,
+            pos: BlockPos,
+            state: BlockStateId,
+            changed: BlockId,
+            moved: bool,
+        ) {
+            assert_eq!(self.block_state(pos), state);
+            self.seen.borrow_mut().push((pos, state, changed, moved));
+        }
+    }
+    let Some(f) = fixture() else { return };
+    let b = &f.behaviours;
+    let mut level = Observer {
+        inner: TestLevel::new(b),
+        seen: RefCell::new(Vec::new()),
+    };
+    let mut ticks = Ticks::new(0);
+    let pos = BlockPos::new(0, 0, 0);
+    let state = b.air();
+    b.shulker_neighbor_updates(&mut level, &mut ticks, pos, state);
+    let expected = [
+        (-1, 0, 0),
+        (1, 0, 0),
+        (0, -1, 0),
+        (0, 1, 0),
+        (0, 0, -1),
+        (0, 0, 1),
+    ];
+    let seen = level.seen.borrow();
+    assert_eq!(seen.len(), expected.len(), "{seen:?}");
+    for (event, (x, y, z)) in seen.iter().zip(expected) {
+        assert_eq!(
+            *event,
+            (BlockPos::new(x, y, z), state, b.block(state), false)
+        );
+    }
+}

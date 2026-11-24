@@ -1,0 +1,16 @@
+[package]
+name = "rift-chat"
+description = "The look of Rift's messages: MiniMessage-style markup turned into the engine's text, and the two-line command error"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# The engine's text: the same `Text` a mod's `Host::feedback` and `Host::tell` take.
+horizon-client-core = { path = "../horizon-client-core" }
+
+[lints]
+workspace = true

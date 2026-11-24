@@ -2708,6 +2708,7 @@ mod postbaseline_lodestone_controls {
         // Direct class ticks do not refresh the headless fixture's tickets.
         // Use the existing ticket model: only chunk zero is forced to tick.
         game.tickets.update(Some(crate::ticket_levels::Sources {
+            limited: Vec::new(),
             forced: vec![(0, 0)],
             ..Default::default()
         }));

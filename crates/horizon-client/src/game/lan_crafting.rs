@@ -202,6 +202,8 @@ impl Game<'_> {
             self.as_guest(host, conn, |g| {
                 let player = g.native_acting_id();
                 for (recipe, stack) in &item_crafted {
+                    // ItemStack.onCraftedBy awards Stats.ITEM_CRAFTED.
+                    g.award_stat("crafted", &stack.item, stack.count as i32);
                     g.native_item_crafted(player, recipe, stack);
                 }
             });
@@ -258,6 +260,8 @@ impl Game<'_> {
         let (uuid, name) = (guest.uuid, guest.name.clone());
         let mut result = menu.slot(0).cloned();
         self.native_prepare_item_craft(uuid, &name, None, &mut result);
+        let grid: Vec<Option<ItemStack>> = (1..=4).map(|k| menu.slot(k).cloned()).collect();
+        self.native_prepare_item_craft_v2(uuid, &name, None, &grid, &mut result);
         let env = self.menu_env();
         menu.set_slot(&env, 0, result);
         let g = &mut host.hub.guests[gi];
@@ -767,6 +771,8 @@ impl Game<'_> {
             let mut result = menu.slot(0).cloned();
             let vanilla = result.clone();
             self.native_prepare_item_craft(uuid, &name, Some(pos), &mut result);
+            let grid: Vec<Option<ItemStack>> = (1..=9).map(|k| menu.slot(k).cloned()).collect();
+            self.native_prepare_item_craft_v2(uuid, &name, Some(pos), &grid, &mut result);
             if result != vanilla && !changed.contains(&0) {
                 changed.push(0);
             }

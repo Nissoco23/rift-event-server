@@ -6222,6 +6222,55 @@ impl Game<'_> {
     ) {
         mod_api::dispatch_prepare_item_craft(self, mod_api::mods(), player, name, pos, result);
     }
+    /// A smithing result was prepared for a server player at `pos`, with the table's `template`, `base`
+    /// and `addition`. Unlike `native_prepare_smithing`, which only hears a table with no result, this
+    /// hears a result vanilla made too, and a mod may replace it or clear it (`None`). API
+    /// @API:prepare_craft_v2@.
+    pub(super) fn native_prepare_smithing_v2(
+        &mut self,
+        player: u128,
+        name: &str,
+        pos: [i32; 3],
+        template: Option<&ItemStack>,
+        base: Option<&ItemStack>,
+        addition: Option<&ItemStack>,
+        result: &mut Option<ItemStack>,
+    ) {
+        mod_api::dispatch_prepare_smithing_v2(
+            self,
+            mod_api::mods(),
+            player,
+            name,
+            pos,
+            template,
+            base,
+            addition,
+            result,
+        );
+    }
+    /// A crafting-grid result was prepared for a server player, with the `grid`'s slots (4 for the
+    /// inventory's, 9 for a crafting table's, row by row); `pos` is the table, or None for the inventory
+    /// grid. Unlike `native_prepare_item_craft`, which only hears a grid with no result, this hears a
+    /// result vanilla made too, and a mod may replace it or clear it (`None`). API
+    /// @API:prepare_craft_v2@.
+    pub(super) fn native_prepare_item_craft_v2(
+        &mut self,
+        player: u128,
+        name: &str,
+        pos: Option<[i32; 3]>,
+        grid: &[Option<ItemStack>],
+        result: &mut Option<ItemStack>,
+    ) {
+        mod_api::dispatch_prepare_item_craft_v2(
+            self,
+            mod_api::mods(),
+            player,
+            name,
+            pos,
+            grid,
+            result,
+        );
+    }
     /// A server player selected trade `index` from `villager` in the trading menu. 302.
     pub(super) fn native_trade_select(
         &mut self,
@@ -8925,6 +8974,49 @@ impl Game<'_> {
     /// `player` (`name`) is joining: the "joined the game" line the host's chat
     /// shows (`line`). Set `line` to `None` to show nothing, or replace it. Only
     /// the host's chat is asked: a dedicated server sends no such line. Server-side.
+    /// What a server player's death does to their inventory and experience, asked once for each
+    /// death (`ServerPlayer.die`) before the loot is dropped. The four start as the
+    /// `keep_inventory` game rule has them (kept and not dropped, or dropped and not kept;
+    /// experience dropped and not kept, or kept and not dropped) and a mod may set each:
+    /// `keep_inventory` and `drop_inventory` both leave the inventory with the player and throw a
+    /// copy of it, neither takes it away and throws nothing; `drop_experience` throws orbs worth
+    /// 7 points a level, 100 at most, and `keep_experience` gives the experience back at the respawn.
+    /// A spectator drops and keeps as in vanilla. Server-side. API @API:player_death_loot@.
+    pub(super) fn native_player_death_loot(
+        &mut self,
+        player: u128,
+        name: &str,
+        keep_inventory: &mut bool,
+        drop_inventory: &mut bool,
+        drop_experience: &mut bool,
+        keep_experience: &mut bool,
+    ) {
+        mod_api::dispatch_player_death_loot(
+            self,
+            mod_api::mods(),
+            player,
+            name,
+            keep_inventory,
+            drop_inventory,
+            drop_experience,
+            keep_experience,
+        );
+    }
+    /// What a server player's death tells the others, asked when death messages are shown
+    /// (`ServerPlayer.die`'s `broadcastSystemMessage`): `line` is the death message and a mod may
+    /// replace it, or set it to `None` to tell nobody; `radius` is `None` (everyone the team lets
+    /// see it) and a mod may set a distance in blocks, which keeps the line to players in the dying
+    /// player's dimension within it, themselves included. The dying player's death screen and the
+    /// log keep the death message. Server-side. API @API:player_death_message@.
+    pub(super) fn native_player_death_message(
+        &mut self,
+        player: u128,
+        name: &str,
+        line: &mut Option<Text>,
+        radius: &mut Option<f64>,
+    ) {
+        mod_api::dispatch_player_death_message(self, mod_api::mods(), player, name, line, radius);
+    }
     /// Pending API @API:player_join_message@.
     pub(super) fn native_player_join_message(
         &mut self,
@@ -9501,6 +9593,36 @@ impl Game<'_> {
             amount,
         );
     }
+    /// `native_living_damage_pre` for a player, right after it, with their `victim_uuid` (none until
+    /// they act on the server), the `health` they have before the hit comes off (absorption is
+    /// already taken out of `amount`) and whether either hand holds a death-protection item, which
+    /// a hit that would kill them uses up (`totem_ready`). Change `amount` as in v1: a mod can cap
+    /// it at `health - floor` to keep a player alive. The other arguments are
+    /// `native_living_damage_pre`'s. Server thread, no `self`. API @API:living_damage_pre_v2@.
+    pub(super) fn native_living_damage_pre_v2(
+        entity: i32,
+        victim_uuid: Option<u128>,
+        kind: &str,
+        damage_type: &str,
+        causing: i32,
+        direct: i32,
+        health: f32,
+        totem_ready: bool,
+        amount: &mut f32,
+    ) {
+        mod_api::dispatch_living_damage_pre_v2(
+            mod_api::mods(),
+            entity,
+            victim_uuid,
+            kind,
+            damage_type,
+            causing,
+            direct,
+            health,
+            totem_ready,
+            amount,
+        );
+    }
     /// The end of `LivingEntity.actuallyHurt` (NeoForge's
     /// `LivingDamageEvent.Post`): `amount` came off entity `entity`'s health,
     /// 0 when nothing did (absorption took it all, or a mod made it 0), after
@@ -9944,6 +10066,7 @@ pub(super) fn hurt_server(hurting: Hurting<'_>, amount: &mut f32) -> bool {
 /// `native_living_damage_pre` for the damage code (`health::DAMAGE_PRE`). Its
 /// one caller.
 pub(super) fn damage_pre(hurting: Hurting<'_>, amount: &mut f32) {
+    let victim_uuid = super::native_damage::victim_uuid(&hurting);
     let (entity, kind, source) = hurt_server_args(hurting);
     Game::native_living_damage_pre(
         entity,
@@ -9953,6 +10076,20 @@ pub(super) fn damage_pre(hurting: Hurting<'_>, amount: &mut f32) {
         source.direct,
         amount,
     );
+    // A player's health and totem are known while their own hit runs.
+    if let Some((health, totem_ready)) = horizon_client::health::player_hit() {
+        Game::native_living_damage_pre_v2(
+            entity,
+            victim_uuid,
+            kind,
+            source.damage_type,
+            source.causing,
+            source.direct,
+            health,
+            totem_ready,
+            amount,
+        );
+    }
 }
 /// `native_living_damage_post` for the damage code (`health::DAMAGE_POST`).
 /// Its one caller.

@@ -225,7 +225,8 @@ impl Game<'_> {
     /// The first block a ray from `eye` along `dir` meets in the level being ticked, within `range` (at most
     /// `RAYCAST_MAX`), as the player's own view reads it: the block outline it crosses; with `fluids`, a fluid
     /// block counts too, at its near face (`ClipContext.Fluid.ANY`). `dir` need not be a unit vector. None on a
-    /// client, for a zero `dir`, and with no hit in range. API @API:pick_block@.
+    /// client, for a zero `dir`, and with no hit in range. The hit names the face the ray entered the block through
+    /// (`NativeHit::face`), which a ricochet reflects off. API @API:pick_block@.
     pub(super) fn native_pick_block(
         &self,
         eye: [f64; 3],
@@ -253,6 +254,7 @@ impl Game<'_> {
             y: hit.point[1],
             z: hit.point[2],
             block: self.res.facts().get(state).name.to_string(),
+            face: hit.face,
         })
     }
     /// The entities of the loaded level `dimension` inside the box from `min` to `max` (both corners included), by

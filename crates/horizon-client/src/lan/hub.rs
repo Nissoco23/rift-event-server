@@ -39,9 +39,11 @@ use horizon_world::{
 use std::sync::{Arc, Mutex, atomic::Ordering};
 
 mod acknowledgements;
+mod activity;
 /// GameEvent types (ClientboundGameEventPacket).
 pub mod chat;
 pub mod chat_filter;
+mod chunk_batch;
 mod spawn_info;
 
 pub mod game_event {
@@ -307,6 +309,9 @@ pub struct Hub {
     pub native_menu_returns: Vec<super::menu::NativeReturn>,
     /// Kicks waiting for the game thread to notify native mods.
     pending_kicks: Vec<HostEvent>,
+    /// Whether the "joined the game" and "left the game" lines are sent (a native mod turns them
+    /// off with `native_set_membership_lines`). They are on, as in vanilla.
+    pub membership_lines: bool,
     /// `[transfer]` on (a dedicated server's `--transfers`): the players a proxy
     /// said would arrive (`player-expect`). None while it is off.
     pub transfers: Option<super::arrivals::Transfers>,
@@ -478,6 +483,32 @@ pub fn display_name(uuid: u128, name: &str) -> Tag {
     ])
 }
 
+/// What clicking, hovering over and shift-clicking a player's shown name carry
+/// (`Player.getDisplayName`): a `/tell` suggestion, the player's entity (their name and
+/// UUID) and the text to insert. A nickname masks the player, so with one the hover is left
+/// out and the click and the insertion name the nickname: nothing in the line gives the
+/// player away, and `/tell <nickname>` still reaches them (`player_named`).
+pub fn identity_fields(
+    name: &str,
+    uuid: u128,
+    nickname: Option<&str>,
+) -> Vec<(&'static str, serde_json::Value)> {
+    let shown = nickname.unwrap_or(name);
+    let mut fields = vec![(
+        "click_event",
+        serde_json::json!({"action": "suggest_command", "command": format!("/tell {shown} ")}),
+    )];
+    if nickname.is_none() {
+        fields.push((
+            "hover_event",
+            serde_json::json!({"action": "show_entity", "id": "minecraft:player",
+                "uuid": horizon_protocol::crypto::uuid_string(uuid), "name": name}),
+        ));
+    }
+    fields.push(("insertion", shown.into()));
+    fields
+}
+
 /// `ChunkMap.getPlayerViewDistance`: `Mth.clamp(requested, 2, server)` (Java's max then min
 /// order also handles a management value below two without panicking when the bounds cross),
 /// under a native mod's limit for the player.
@@ -538,14 +569,16 @@ impl Hub {
     /// Player.getDisplayName: the name formatted for the player's team
     /// (PlayerTeam.formatNameForTeam), suggesting `/tell NAME `, showing the
     /// player on hover and inserting the name.
-    /// A nickname (`nicknames`) takes the name's place in the text; the
-    /// hover, the suggested `/tell` and the insertion keep the real name.
+    /// A nickname (`nicknames`) takes the name's place in the text, and with it
+    /// the hover, the suggested `/tell` and the insertion: they name the
+    /// nickname, so the line does not give the player away ([`identity_fields`]).
     /// A mod's display name (`display_names`) takes the place of both.
     pub fn player_display_name(&self, uuid: u128, name: &str) -> Tag {
-        let shown = self.nicknames.get(&uuid).map_or(name, String::as_str);
+        let nickname = self.nicknames.get(&uuid).map(String::as_str);
+        let shown = nickname.unwrap_or(name);
         let custom = self.display_names.get(&uuid);
         let team = self.teams.iter().find(|t| t.players.contains(name));
-        if team.is_none() && shown == name && custom.is_none() {
+        if team.is_none() && nickname.is_none() && custom.is_none() {
             return display_name(uuid, name);
         }
         let mut c = match (team, custom) {
@@ -555,11 +588,9 @@ impl Hub {
             (None, Some(custom)) => serde_json::json!({ "text": "", "extra": [custom] }),
             (None, None) => serde_json::json!({ "text": shown }),
         };
-        c["click_event"] =
-            serde_json::json!({"action": "suggest_command", "command": format!("/tell {name} ")});
-        c["hover_event"] = serde_json::json!({"action": "show_entity", "id": "minecraft:player",
-            "uuid": horizon_protocol::crypto::uuid_string(uuid), "name": name});
-        c["insertion"] = name.into();
+        for (key, value) in identity_fields(name, uuid, nickname) {
+            c[key] = value;
+        }
         crate::scoreboard::component_tag(&c)
     }
 }
@@ -652,10 +683,10 @@ fn requeue_ring(
 }
 
 /// A player's next chunks (`Hub::next_batch`), with their places in its queues: the view's, then
-/// the far ring's (none: the save has none to send).
+/// the far ring's. Missing saved columns stay queued for a later retry.
 struct Batch<'w> {
     near: Vec<(usize, &'w Chunk)>,
-    far: Vec<(usize, Option<Column<'w>>)>,
+    far: Vec<(usize, Column<'w>)>,
 }
 
 /// A far chunk to send: the level's own while it holds it, else what the save's readers made.
@@ -767,6 +798,7 @@ impl Hub {
             native_menu_events: Vec::new(),
             native_menu_returns: Vec::new(),
             pending_kicks: Vec::new(),
+            membership_lines: true,
             transfers: None,
             native_tracking: Vec::new(),
             attachment_snapshots: Vec::new(),
@@ -987,6 +1019,28 @@ impl Hub {
             .map(Guest::chunk)
             .collect()
     }
+    /// The distance the server holds a player's chunks loaded and simulated out to when a native mod
+    /// has capped them (`native_set_player_view_distance`): the cap, under the server's view
+    /// distance. None for a player with no cap, who is held at the server's view and simulation
+    /// distances.
+    pub fn capped_distance(&self, g: &Guest) -> Option<i32> {
+        g.view_limit
+            .map(|limit| limit.min(self.config.view_distance))
+    }
+    /// [`Self::loading_chunks`] with how far each player's chunks are kept loaded: the server's view
+    /// distance, or the cap a mod set on them.
+    pub fn loading_areas(&self, loads: impl Fn(&Guest) -> bool) -> Vec<((i32, i32), i32)> {
+        self.guests
+            .iter()
+            .filter(|g| self.watches(g) && loads(g) && !g.fake)
+            .map(|g| {
+                (
+                    g.chunk(),
+                    self.capped_distance(g).unwrap_or(self.config.view_distance),
+                )
+            })
+            .collect()
+    }
     /// The areas fake players keep loaded: the chunk under each and its radius, their own view
     /// distance plus one (what they track), under the server's.
     pub fn fake_loading_areas(&self, loads: impl Fn(&Guest) -> bool) -> Vec<((i32, i32), i32)> {
@@ -1041,32 +1095,49 @@ impl Hub {
     }
     /// PlayerList.broadcastSystemMessage.
     pub fn system_message(&self, content: Tag) {
-        self.broadcast(&C::SystemChat(play::SystemChat {
-            content,
-            overlay: false,
-        }));
+        self.system_message_to(content, |_| true);
     }
     /// A system message for the guests `hears` picks by name
     /// (`PlayerList.broadcastSystemToTeam` and its kin).
     pub fn system_message_to(&self, content: Tag, hears: impl Fn(&str) -> bool) {
-        let body = C::SystemChat(play::SystemChat {
-            content,
-            overlay: false,
-        })
-        .encode();
-        for g in self.guests.iter().filter(|g| g.placed && hears(&g.name)) {
-            g.sender.send(body.clone());
-        }
+        self.send_system(content, |g| hears(&g.name));
+    }
+    /// The names of the placed guests in the dimension of guest `conn` and within `radius` blocks
+    /// of them, themselves included: who a message that must be near them reaches.
+    pub fn names_within(&self, conn: u32, radius: f64) -> std::collections::HashSet<String> {
+        let Some(origin) = self.guests.iter().find(|g| g.conn == conn) else {
+            return std::collections::HashSet::new();
+        };
+        let limit = radius.max(0.0).powi(2);
+        self.guests
+            .iter()
+            .filter(|g| {
+                g.placed && g.dimension == origin.dimension && {
+                    let d = (0..3).map(|k| (g.position[k] - origin.position[k]).powi(2));
+                    d.sum::<f64>() <= limit
+                }
+            })
+            .map(|g| g.name.clone())
+            .collect()
     }
     /// `ServerPlayer.sendSystemMessage` to the guest with `uuid`, in any
     /// dimension.
     pub fn system_message_to_player(&self, uuid: u128, content: Tag) {
+        self.send_system(content, |g| g.uuid == uuid);
+    }
+    /// `ServerPlayer.sendSystemMessage(Component, false)` to the placed guests `to` picks: not to one whose
+    /// chat is hidden (`acceptsSystemMessages`: HIDDEN, 2, takes only an overlay).
+    fn send_system(&self, content: Tag, to: impl Fn(&Guest) -> bool) {
         let body = C::SystemChat(play::SystemChat {
             content,
             overlay: false,
         })
         .encode();
-        for g in self.guests.iter().filter(|g| g.placed && g.uuid == uuid) {
+        for g in self
+            .guests
+            .iter()
+            .filter(|g| g.placed && g.info.chat_visibility != 2 && to(g))
+        {
             g.sender.send(body.clone());
         }
     }
@@ -1092,8 +1163,11 @@ impl Hub {
     /// ListPlayersCommand's reply: the players in join order (the host of a
     /// LAN world first), as display names (Player.getDisplayName, with the
     /// team's colour and affixes) or names with ids, joined by
-    /// gray commas (ComponentUtils.formatList).
-    pub fn list_reply(&self, uuids: bool) -> Tag {
+    /// gray commas (ComponentUtils.formatList). Horizon: a nicknamed player is
+    /// listed by their display name either way, since their real name and id
+    /// are what a nickname hides, unless `reveal`: an operator asked, who is
+    /// the one allowed to know.
+    pub fn list_reply(&self, uuids: bool, reveal: bool) -> Tag {
         let players: Vec<(u128, &str)> = self
             .guests
             .iter()
@@ -1101,7 +1175,7 @@ impl Hub {
             .map(|g| (g.uuid, g.name.as_str()))
             .collect();
         let format = |(uuid, name): (u128, &str)| {
-            if uuids {
+            if uuids && (reveal || !self.nicknames.contains_key(&uuid)) {
                 Tag::compound([
                     ("translate", string("commands.list.nameAndId")),
                     (
@@ -1507,14 +1581,16 @@ impl Hub {
         // a native mod hides it from). A held player is not announced, and
         // not placed.
         if !held {
-            let joined = C::SystemChat(play::SystemChat {
-                content: self.joined_line(uuid, &name),
-                overlay: false,
-            })
-            .encode();
-            for g in self.guests.iter().filter(|g| g.placed && g.conn != conn) {
-                if self.sees(g.permission, uuid) {
-                    g.sender.send(joined.clone());
+            if self.membership_lines {
+                let joined = C::SystemChat(play::SystemChat {
+                    content: self.joined_line(uuid, &name),
+                    overlay: false,
+                })
+                .encode();
+                for g in self.guests.iter().filter(|g| g.placed && g.conn != conn) {
+                    if self.sees(g.permission, uuid) {
+                        g.sender.send(joined.clone());
+                    }
                 }
             }
             self.guests[i].placed = true;
@@ -1724,7 +1800,7 @@ impl Hub {
             let g = &self.guests[i];
             (g.name.clone(), g.uuid, g.game_mode, g.conn)
         };
-        if announce {
+        if announce && self.membership_lines {
             let joined = C::SystemChat(play::SystemChat {
                 content: self.joined_line(uuid, &name),
                 overlay: false,
@@ -2567,6 +2643,7 @@ impl Hub {
         if !self.guests.iter().any(|o| o.uuid == g.uuid) {
             self.compass_targets.remove(&g.uuid);
         }
+        let gone = self.leaving(g.uuid);
         if let Some(m) = g
             .menu
             .as_ref()
@@ -2595,6 +2672,7 @@ impl Hub {
             log::info!("[lan] {} left: {reason}", g.name);
         }
         if !g.placed {
+            self.leaving_done(gone);
             return g;
         }
         // `PlayerList.remove`: the entities it tracked stop (`removePairing`).
@@ -2624,11 +2702,28 @@ impl Hub {
             if o.tab_hidden.remove(&g.uuid) {
                 continue;
             }
-            if !g.quiet_leave {
+            if !g.quiet_leave && self.membership_lines {
                 o.sender.send(left.clone());
             }
         }
+        self.leaving_done(gone);
         g
+    }
+
+    /// The player `uuid` is leaving for good (no other connection holds it): whether their
+    /// session's names, a nickname and a name tag, go with them once their leave line has
+    /// named them as the others knew them ([`Self::leaving_done`]).
+    fn leaving(&self, uuid: u128) -> Option<u128> {
+        (!self.guests.iter().any(|o| o.uuid == uuid)).then_some(uuid)
+    }
+
+    /// A nickname and a name tag last as long as the player's session: the next time they join
+    /// they are announced, listed and shown under their own name.
+    fn leaving_done(&mut self, gone: Option<u128>) {
+        if let Some(uuid) = gone {
+            self.nicknames.remove(&uuid);
+            self.name_tags.remove(&uuid);
+        }
     }
 
     /// Takes the frozen player `uuid` out of the world because a proxy moved it to another
@@ -2780,6 +2875,7 @@ impl Hub {
         // Each column once, however many players it goes to, with the
         // number of batches that take it.
         let mut columns = Columns::default();
+        let mut far_bodies = crate::fast_hash::FxHashMap::default();
         let batches: Vec<_> = batches
             .into_iter()
             .map(|(i, batch)| {
@@ -2790,12 +2886,17 @@ impl Hub {
                     .unzip();
                 let mut far = Vec::new();
                 for (idx, column) in batch.far {
-                    far.push((idx, column.is_some()));
-                    match column {
-                        Some(Column::Level(chunk)) => bodies.push(Body::Level(columns.add(chunk))),
-                        Some(Column::Saved(body)) => bodies.push(Body::Saved(body)),
-                        None => {}
-                    }
+                    far.push(idx);
+                    let body = match column {
+                        Column::Level(chunk) => far_bodies
+                            .entry((chunk.x, chunk.z))
+                            .or_insert_with(|| {
+                                Arc::<[u8]>::from(self.encoder.body_far(chunk, world))
+                            })
+                            .clone(),
+                        Column::Saved(body) => body,
+                    };
+                    bodies.push(Body::Saved(body));
                 }
                 (i, taken, far, bodies)
             })
@@ -2845,13 +2946,15 @@ impl Hub {
                     seen.iter().map(|&(x, z)| Holder::Chunk([x, z])),
                 );
             }
-            // A far chunk the save doesn't have leaves the queue unsent.
-            seen.extend(far.into_iter().rev().filter_map(|(idx, sent)| {
+            // Keep the scan's next position after removing sent entries. Missing columns
+            // remain queued: the far reader's negative cache paces their retries.
+            g.far_cursor -= far.iter().filter(|&&idx| idx < g.far_cursor).count();
+            seen.extend(far.into_iter().rev().map(|idx| {
                 let key = g.far_queue.remove(idx);
-                if sent && self.sync_attachments && g.brand == "horizon" {
+                if self.sync_attachments && g.brand == "horizon" {
                     g.far_sent_chunks.insert(key);
                 }
-                sent.then_some(key)
+                key
             }));
             g.sent_chunks.extend(seen);
         }
@@ -2897,92 +3000,13 @@ impl Hub {
                 true
             }
         });
+        g.far_cursor = 0;
         requeue(&mut g.chunk_queue, &g.sent_chunks, (cx, cz), r);
         if reach > r {
             requeue_ring(&mut g.far_queue, &g.sent_chunks, (cx, cz), r, reach);
         } else {
             g.far_queue.clear();
         }
-    }
-
-    /// PlayerChunkSender.sendNextChunks' choice: ready chunks, closest first,
-    /// as many as the batch quota the client's acknowledgements pace allows,
-    /// with their places in the queue. What the view leaves of the quota goes
-    /// to the far ring, as far as its brake lets it reach. A memory connection
-    /// that has not loaded yet sends every ready view column in that one
-    /// batch; the quota recorded for it covers them, so the tick after
-    /// `PlayerLoaded` is capped again.
-    fn next_batch<'w>(
-        &mut self,
-        i: usize,
-        world: &'w World,
-        streaming: Option<&crate::streaming::Streaming>,
-    ) -> Option<Batch<'w>> {
-        let g = &mut self.guests[i];
-        if self.ticks <= g.placed_at + 1 || g.unacknowledged >= g.max_unacknowledged {
-            return None;
-        }
-        g.batch_quota = (g.batch_quota + g.chunks_per_tick).min(g.chunks_per_tick.max(1.0));
-        if g.batch_quota < 1.0 || (g.chunk_queue.is_empty() && g.far_queue.is_empty()) {
-            return None;
-        }
-        let budget = g.batch_quota.floor() as usize;
-        // The integrated server's own player, still on the loading screen.
-        // LAN guests and a client that has loaded keep the quota above.
-        let burst = g.address == super::conn::MEMORY_ADDRESS && !g.loaded;
-        let near_take = if burst { g.chunk_queue.len() } else { budget };
-        // ChunkStatus.LIGHT needs its neighbours at INITIALIZE_LIGHT: a
-        // column whose light layers would leave one out waits for it.
-        let ready = |c: &Chunk| {
-            c.lit
-                && streaming.is_none_or(|streaming| {
-                    (-1..=1).all(|dz| {
-                        (-1..=1).all(|dx| {
-                            let (x, z) = (c.x + dx, c.z + dz);
-                            world.chunks.contains_key(&(x, z))
-                                || streaming.proto_sections(x, z).is_some()
-                        })
-                    })
-                })
-        };
-        let near: Vec<_> = g
-            .chunk_queue
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, key)| Some((idx, &**world.chunks.get(key)?)))
-            .filter(|(_, c)| ready(c))
-            .take(near_take)
-            .collect();
-        let mut far = Vec::new();
-        if let (Some(ring), Some((cx, cz))) = (self.far.as_mut(), g.center) {
-            // What the view left of the vanilla quota. A first-view burst can take more than that.
-            let mut left = budget.saturating_sub(near.len());
-            for (idx, &(x, z)) in g.far_queue.iter().enumerate().take(super::far::LOOKS) {
-                if left == 0 {
-                    break;
-                }
-                if !tracked(cx, cz, ring.limit(), x, z) {
-                    continue;
-                }
-                let column = match world.chunks.get(&(x, z)) {
-                    Some(c) if ready(c) => Some(Column::Level(c)),
-                    Some(_) => continue,
-                    None => match ring.saved(x, z) {
-                        super::far::Saved::Body(body) => Some(Column::Saved(body)),
-                        super::far::Saved::Missing => None,
-                        super::far::Saved::Waiting => continue,
-                    },
-                };
-                left -= usize::from(column.is_some());
-                far.push((idx, column));
-            }
-        }
-        // `update_chunks` subtracts the batch. Covering the near columns keeps that from going
-        // negative, so the next tick's `.min(chunks_per_tick)` cap holds again.
-        if burst {
-            g.batch_quota = g.batch_quota.max(near.len() as f32);
-        }
-        (!near.is_empty() || !far.is_empty()).then_some(Batch { near, far })
     }
 
     /// `ChunkMap.resendBiomesForChunks`: each player in the level is sent,
@@ -3761,12 +3785,7 @@ impl Hub {
         // ServerEntity.sendDirtyEntityData reaches the player itself too.
         // Keep the normal standing/crouching pose separate from the shared flags;
         // the existing sleep/wake publishers share this wire-state bookkeeping.
-        let pose = g.pose();
-        if matches!(
-            pose,
-            crate::pose::Pose::Standing | crate::pose::Pose::Crouching
-        ) && pose != g.sent_pose
-        {
+        if let Some(pose) = g.own_pose().filter(|p| *p != g.sent_pose) {
             g.sent_pose = pose;
             g.send(&C::SetEntityData(play::SetEntityData {
                 id: g.entity_id,
@@ -3782,6 +3801,18 @@ impl Hub {
             g.send(&C::SetEntityData(play::SetEntityData {
                 id: g.entity_id,
                 values,
+            }));
+        }
+        // ServerPlayer.updateOptions sets the skin layers the client asked for, and
+        // ServerEntity.sendDirtyEntityData sends them to the player too: its own model draws its
+        // layers from them, so a player never sent them sees none on themselves.
+        let g = &mut self.guests[i];
+        let layers = g.info.model_customisation;
+        if layers != g.sent_skin {
+            g.sent_skin = layers;
+            g.send(&C::SetEntityData(play::SetEntityData {
+                id: g.entity_id,
+                values: vec![(16, serializer::BYTE, Value::Byte(layers as i8))],
             }));
         }
         // Sent when the health or the food level changes, or the saturation
@@ -4023,25 +4054,12 @@ impl Hub {
             // ServerPlayer.resetLastActionTime: every handler of a player's
             // own action resets it, movement only when it moved
             // (handlePlayerKnownMovement), PlayerInput once loaded.
-            let acted = match &packet {
-                S::AcceptTeleportation(_)
-                | S::PlayerAbilities(_)
-                | S::MovePlayerStatus(_)
-                | S::MovePlayerRot(_)
-                | S::PlayerLoaded(_)
-                | S::ChunkBatchReceived(_)
-                | S::ClientInformation(_)
-                | S::RecipeBookChangeSettings(_)
-                | S::RecipeBookSeenRecipe(_)
-                | S::ClientTickEnd(_)
-                | S::KeepAlive(_)
-                | S::Pong(_)
-                | S::PingRequest(_) => false,
-                S::MovePlayerPos(p) => self.moved_far(i, [p.x, p.y, p.z]),
-                S::MovePlayerPosRot(p) => self.moved_far(i, [p.x, p.y, p.z]),
-                S::PlayerInput(_) => self.guests[i].client_loaded(),
-                _ => true,
-            };
+            let acted = activity::counts_as_activity(
+                &packet,
+                self.guests[i].client_loaded(),
+                self.guests[i].vehicle_good,
+                |to| self.moved_far(i, to),
+            );
             if acted {
                 self.guests[i].last_action_tick = self.ticks;
             }
@@ -4588,7 +4606,7 @@ impl Hub {
             at[1] + f64::from(d.height) + 0.0625,
             at[2] + half,
         ];
-        no_blocks_in(world, lo, hi)
+        no_blocks_in(world, lo, hi, &self.encoder)
     }
 
     /// `ServerGamePacketListenerImpl.forceSendPlayerSupportBlocks`: the blocks just under the
@@ -5064,6 +5082,8 @@ impl Hub {
             keep: 0,
         }));
         g.sent_pose = crate::pose::Pose::Standing;
+        // The client's new player has no skin layers until it is sent them again.
+        g.sent_skin = 0;
         // ClientPacketListener.handleRespawn without KEEP_ENTITY_DATA: the client's new player
         // starts with wasSprinting false. (A level change keeps it: the new player sprints on, or
         // says STOP.)
@@ -5276,14 +5296,14 @@ const PLAYER_GRAVITY: f64 = 0.08;
 
 /// `ServerGamePacketListenerImpl.getMaximumFlyingTicks`: 80 ticks, more where
 /// gravity is weaker, none at all (never kicked) without gravity.
-/// `ServerGamePacketListenerImpl.noBlocksAround` over a box: every block from `lo` to `hi` is air, in
-/// loaded chunks (a chunk not loaded yet is not known to be air: nothing floats there).
-pub fn no_blocks_in(world: &World, lo: [f64; 3], hi: [f64; 3]) -> bool {
+/// `ServerGamePacketListenerImpl.noBlocksAround` over a box: every block from `lo` to `hi` is
+/// `isAir()` (`air`'s state table), in loaded chunks (a chunk not loaded yet is not known to be air).
+pub fn no_blocks_in(world: &World, lo: [f64; 3], hi: [f64; 3], air: &ChunkEncoder) -> bool {
     let cell = |v: f64| v.floor() as i32;
     (cell(lo[0])..=cell(hi[0])).all(|x| {
         (cell(lo[2])..=cell(hi[2])).all(|z| {
             world.loaded(x, z)
-                && (cell(lo[1])..=cell(hi[1])).all(|y| world.is_air(world.block(x, y, z)))
+                && (cell(lo[1])..=cell(hi[1])).all(|y| air.is_air(world.block(x, y, z).0))
         })
     })
 }
@@ -5341,7 +5361,7 @@ fn ticking_state(rate: f32, frozen: bool) -> C {
 pub fn guest_body(g: &Guest) -> BodyFlags {
     let m = g.motion.as_deref();
     BodyFlags {
-        gliding: g.fall_flying,
+        gliding: g.fall_flying || g.glide_end_unsent,
         swimming: m.is_some_and(|m| m.swimming),
         crawling: m.is_some_and(|m| m.pose == crate::pose::Pose::Swimming && !m.swimming),
         crouching: m.is_some_and(|m| m.pose == crate::pose::Pose::Crouching),

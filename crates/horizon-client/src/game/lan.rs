@@ -258,6 +258,9 @@ pub(super) struct LanHost {
     pub commands: Vec<super::lan_actions::GuestCommand>,
     /// Mods' quiet commands waiting to run a few a tick (game/lan_quiet.rs).
     pub quiet: std::collections::VecDeque<super::lan_quiet::QuietBatch>,
+    /// Connections whose refused quiet commands were logged once already: not again, however many
+    /// they send.
+    pub quiet_refused: std::collections::HashSet<u32>,
     /// Far terrain sampled for Horizon clients (game/lan_far.rs); None when
     /// `horizon-lod-distance` is 0.
     pub far: Option<horizon_client::lod_net::Service>,
@@ -1452,6 +1455,7 @@ impl Game<'_> {
         hub.flat_world = self.world_flat;
         hub.debug_world = self.world_debug;
         let port = hub.lan.port;
+        self.nicknames.clear();
         self.world.block_log = Some(Vec::new());
         self.world.light_log = Some(Default::default());
         self.lan = Some(LanHost {
@@ -1469,6 +1473,7 @@ impl Game<'_> {
             border_sent: None,
             commands: Vec::new(),
             quiet: std::collections::VecDeque::new(),
+            quiet_refused: Default::default(),
             far,
             native_commands: None,
             native_usages: Vec::new(),
@@ -1506,6 +1511,7 @@ impl Game<'_> {
         };
         self.award_leave_game_to_all(&mut host);
         self.save_leaving_guests(&mut host);
+        self.nicknames.clear();
         host.hub.disconnect_all();
         // Give the network threads a moment to flush the disconnect packets.
         std::thread::sleep(std::time::Duration::from_millis(100));
@@ -2313,6 +2319,11 @@ impl Game<'_> {
                         self.lan = Some(host);
                         self.native_player_logged_out(guest.uuid, &guest.name);
                         host = self.lan.take()?;
+                    }
+                    // The hub dropped their nickname as it sent the leave line; the lines above
+                    // still named them by it, and a connection of theirs that took over keeps it.
+                    if !host.hub.guests.iter().any(|g| g.uuid == guest.uuid) {
+                        self.nicknames.remove(&guest.uuid);
                     }
                 }
                 HostEvent::Flight { conn, flying } => {
@@ -3134,17 +3145,17 @@ impl Game<'_> {
             self.remote_totem(id);
         }
     }
-    /// `LivingEntity.onEquippedItemBroken` for the acting player (the guest whose turn it
-    /// is, else the host): `level.broadcastEntityEvent` with `entityEventForEquipmentBreak`
-    /// of the slot, which each client answers with `breakItem` (the sound and the crumbs,
-    /// `remote_equipment_break`). Without a hub to tell, or in a window that runs the world
-    /// itself, the sound and the crumbs are played here.
+    /// `ServerPlayer.onEquippedItemBroken` for the acting player (the guest whose turn it
+    /// is, else the host): the broken statistic, then `level.broadcastEntityEvent` of the
+    /// slot's break event, which each client answers with `breakItem` (the sound and the
+    /// crumbs, `remote_equipment_break`). Without a hub to tell, they are played here.
     pub(super) fn player_equipment_broke(
         &mut self,
         slot: horizon_world::player_inventory::EquipmentSlot,
         stack: &horizon_client::items::ItemStack,
     ) {
         use horizon_world::player_inventory::EquipmentSlot;
+        self.award_stat("broken", &stack.item, 1);
         let event = match slot {
             EquipmentSlot::MainHand => 47,
             EquipmentSlot::OffHand => 48,
@@ -3383,14 +3394,14 @@ impl Game<'_> {
         // it. An extra area finishes its chunks out to its radius + 1. That
         // covers what the player tracks (`ChunkTrackingView`, within its view
         // distance + 1) and those chunks' lit neighbours.
-        let radius = host.hub.config.view_distance + 1;
         let rule = self.ui.rules.bool("spectators_generate_chunks");
-        // The held players are sent the level, so their chunks are kept as the placed ones'.
+        // The held players are sent the level, so their chunks are kept as the placed ones'. A player
+        // a native mod has capped is kept loaded out to the cap, not the server's view distance.
         self.streaming.extra = host
             .hub
-            .loading_chunks(|g| super::game_mode::loads_chunks(rule, g.spectator()))
+            .loading_areas(|g| super::game_mode::loads_chunks(rule, g.spectator()))
             .into_iter()
-            .map(|chunk| (chunk, radius))
+            .map(|(chunk, distance)| (chunk, distance + 1))
             // Fake players load a small area.
             .chain(
                 host.hub
@@ -3764,6 +3775,7 @@ mod tests {
             border_sent: None,
             commands: Default::default(),
             quiet: Default::default(),
+            quiet_refused: Default::default(),
             far: None,
             native_commands: None,
             native_usages: Vec::new(),

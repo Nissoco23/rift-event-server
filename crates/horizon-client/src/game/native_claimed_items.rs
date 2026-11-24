@@ -28,6 +28,9 @@ pub struct NativeHit {
     pub z: f64,
     /// The block's id (`minecraft:stone`).
     pub block: String,
+    /// The face the ray entered the block through, as the direction it faces (`[0, 1, 0]` for the
+    /// top); `[0, 0, 0]` where it is not known, as over the distant terrain.
+    pub face: [i32; 3],
 }
 /// What happened to a mod's claimed item, oldest first.
 #[derive(Clone, Debug, PartialEq)]
@@ -143,13 +146,17 @@ impl Game<'_> {
         let eye = self.eye_position()?;
         let dir = super::view_vector(self.yaw, self.pitch);
         let reach = f64::from(RAYCAST_MAX);
-        let (pos, point, state) = match self.clip_ray(eye, dir, reach) {
+        let (pos, point, state, face) = match self.clip_ray(eye, dir, reach) {
             Some(hit) => (
                 hit.pos,
                 hit.point,
                 self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]),
+                hit.face,
             ),
-            None => self.lod_ray(eye, dir, reach)?,
+            None => {
+                let (pos, point, state) = self.lod_ray(eye, dir, reach)?;
+                (pos, point, state, [0; 3])
+            }
         };
         let distance = (0..3)
             .map(|i| (point[i] - eye[i]).powi(2))
@@ -165,6 +172,7 @@ impl Game<'_> {
                 y: point[1],
                 z: point[2],
                 block: self.res.facts().get(state).name.to_string(),
+                face,
             },
         ))
     }
@@ -219,6 +227,7 @@ impl Game<'_> {
         };
         self.native_input.start(&id, item, slot);
         self.using = Some((slot, 0));
+        self.use_start.item = self.held().cloned();
         true
     }
     /// `tick_used_item` for a claimed item: counts the ticks held and ends

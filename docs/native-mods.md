@@ -527,6 +527,38 @@ canceled by `native_living_incoming_damage`, or within the cooldown and no stron
 wolf's armour takes the hit. Like `native_living_incoming_damage`, they have no `self` and run on the server thread.
 API @API:living_damage@.
 
+`native_living_damage_pre_v2(entity, victim_uuid, kind, damage_type, causing, direct, health, totem_ready, amount)`
+is `native_living_damage_pre` for a player, right after it, with what a mod needs to hold a player's health above a
+floor: their UUID (none until they act on the server), the `health` they have before the hit comes off, and
+`totem_ready`, whether either hand holds a death-protection item, which a hit that would kill them uses up
+(`checkTotemDeathProtection`). `amount` is what is about to come off after armour, enchantments, effects and
+absorption, so `amount.min(health - floor)` is exact. A mob's hit is not told. API @API:living_damage_pre_v2@.
+
+### What a death tells the others
+
+`native_player_death_message(player, name, line, radius)` is asked when a server player dies and death messages are
+shown (`showDeathMessages`), before the line goes out (`ServerPlayer.die`'s `broadcastSystemMessage`). `line` starts
+as the death message: replace it, or set it to `None` to tell nobody. `radius` starts as `None` (everyone the team
+lets see it, as in vanilla); set a distance in blocks to keep the line to players in the dying player's dimension
+within it, the dying player included. The dying player's own death screen and the log keep the death message.
+`native_set_membership_lines(show)` turns the "joined the game" and "left the game" lines off or on for everyone (the
+player list entry and the entity still come and go, and the log still says it): on at start, as in vanilla, and it
+lasts until the server stops. It returns false off a server and inside a guest's packet hook, where the hub is taken
+out: call it from a tick hook and try again at the next if it was refused. The hardcore mod
+([README](../rift-mods/hardcore/README.md)) is built on these. API @API:player_death_message@ and
+@API:membership_lines@.
+
+### What a death does to the inventory
+
+`native_player_death_loot(player, name, keep_inventory, drop_inventory, drop_experience, keep_experience)` is asked
+once for each server player's death (`ServerPlayer.die`), before the loot is dropped, with what the `keep_inventory`
+game rule says: the inventory kept and not dropped, or dropped and not kept; the experience dropped and not kept, or
+kept and not dropped. A mod may set each. Kept and dropped leaves the inventory with the player and throws a copy of
+it (what vanishes is not copied); neither takes it away and throws nothing. `drop_experience` throws the experience
+as orbs, 7 points a level and 100 at most, and `keep_experience` gives it back at the respawn. A spectator drops and
+keeps as in vanilla. `native_world_spawn()` is the block of the world spawn (`/setworldspawn`). API
+@API:player_death_loot@ and @API:world_spawn@.
+
 ### The build's warnings
 
 Before it builds, the launcher reads the mods' `[[injection]]` lists and says three things in `native/build.log` that
@@ -913,7 +945,7 @@ API 61 adds mods' own sound events in `native_play_sound`: an event of another n
 name, as vanilla sends a sound that isn't in its registry, and they hear it when their resources define it (a content mod's `assets/mymod/sounds.json`
 and its `.ogg` files). `minecraft:` events must still be registered. Bundles that play their own sounds need `"hooks": 61`.
 
-API 62 adds nicknames for server mods: `native_set_nickname(uuid, Option<&str>)` shows a name in place of a player's in chat (their messages, `/me`, `/msg`) and the Tab list, the real name on hover and everywhere else; `native_text_allowed(text)` asks the server's chat filter. Both outside a player's hook. Bundles need "hooks": 62.
+API 62 adds nicknames for server mods: `native_set_nickname(uuid, Option<&str>)` shows a name in place of a player's in chat (their messages, `/me`, `/msg`), the Tab list and the lines the server writes about them (death and advancement lines, `/list`, command feedback). The name hides the player: hovering it shows nothing of them, clicking it suggests `/tell` with the nickname (which reaches them), and `/list uuids` lists them by it for players who are not operators. The real name stays in the log, commands, selectors and the server's events. A nickname ends when the player leaves. `native_text_allowed(text)` asks the server's chat filter. Both outside a player's hook. Bundles need "hooks": 62.
 
 API 63 adds context-free block and item tag lookups from server hooks (`native_server_block_in_tag`, `native_server_item_in_tag`). They return `NotServer` on a client and `TagsUnavailable` before the world loads its tags. An unknown tag returns false; an empty stack tests `minecraft:air`. Bundles need "hooks": 63.
 
@@ -2233,9 +2265,11 @@ For mods that run where the world is simulated: a dedicated server, a LAN host, 
   players. A usage is words, then arguments `<name:kind>`, optional ones last in brackets:
   `NativeCommand::new("pay <player:player> <amount:integer>")`, `NativeCommand::op("eco set <player:player>
   <amount:integer>", 3)` for operators of level 3. Kinds: `word`, `text` (the rest of the line, last), `integer`,
-  `number`, `boolean`, `player`, `item`, `block_pos`. The usages of one command merge into one tree, which every
-  player receives after vanilla's (filtered by their level, as vanilla's is), so their chat box completes and colours
-  it. A name vanilla has, or a usage that doesn't parse, is left out with a warning in the log.
+  `number`, `boolean`, `player` (one online player), `players` (several: the player's client completes `@a`, `@p`,
+  `@r` and `@s` for it, and the mod gets the typed word and resolves it), `item`, `block_pos`. The usages of one
+  command merge into one tree, which every player receives after vanilla's (filtered by their level, as vanilla's
+  is), so their chat box completes and colours it. A name vanilla has, or a usage that doesn't parse, is left out
+  with a warning in the log.
 - **`native_refresh_commands()`** (`host.refresh_commands()` for trait mods, API @API:refresh_commands@): a helper for
   a mod whose commands change while the server runs (a plugin host that reloads a plugin, a mod turned on at run time).
   At the start of the next server tick every mod's `native_register_commands` is asked again, the commands players may
@@ -2706,8 +2740,11 @@ server only.
   to `distance` chunks (2 to 32), None gives it the server's again. The player's distance is the smallest of the
   server's, what its client asked for and the limit; only that player is told its radius (`SetChunkCacheRadius`), and
   from its next view update it is sent, keeps and tracks chunks and entities within it, the others as before. The
-  server still loads its own view distance round every player, so the limit can only lower a player's distance (raise
-  the server's and limit the others to give one player more). It lasts until the player leaves.
+  limit is also how far the server keeps that player's chunks loaded and simulated (mobs, crops, redstone tick around
+  them), under the server's view distance, which is the most any player can have: raise the server's and limit the
+  others to give one player more. A player with no limit has the server's view and simulation distances; this is
+  one of the places the engine differs from vanilla on purpose ([rift-additions.md](rift-additions.md)). It lasts
+  until the player leaves.
   `native_player_view_distance(uuid)` is the distance the player has now. Both answer false/None for a player not online
   and inside a guest's packet hook, where the hub is taken out: call them from a tick or console hook. API
   @API:player_view_distance@.
@@ -3250,7 +3287,8 @@ injections before.
   place of their nickname or name, as Bukkit's `Player.setDisplayName`: their chat messages, `/me`, `/msg` both ways
   and the lines that they joined or left; None shows the nickname or name again. Their team's prefix, suffix and colour
   still go around it; hovering it gives the real name, which `/tell` is suggested with and which stays in the log,
-  commands and selectors. The Tab list keeps `native_set_list_name`'s or the nickname. Kept by UUID until a mod sets
+  commands and selectors (a nickname hides the real name from the hover and the suggestion). The Tab list keeps
+  `native_set_list_name`'s or the nickname. Kept by UUID until a mod sets
   it again or the server stops. Outside a player's hook; false there and when they aren't on. Bundles need
   `"hooks": @API:set_display_name@`.
 - Helper **`native_set_name_tag(uuid, tag)`** (`host.set_name_tag`): a plain name over that player's head for everyone
@@ -3259,8 +3297,8 @@ injections before.
   spaces, no colours (a team's formatting applies only while the team lists the shown name). The other players'
   clients get their entry and entity again at once (a blink), and their Tab list shows the tag unless a list name or
   nickname covers it; their own client reads it from their next join. Chat, commands, selectors, the log and the
-  server's events keep the real name. Kept by UUID until a mod sets it again or the server stops. Outside a player's
-  hook; false there, when they aren't on and for a tag that isn't one. Bundles need `"hooks": @API:set_name_tag@`.
+  server's events keep the real name. Kept by UUID until a mod sets it again, the player leaves or the server stops.
+  Outside a player's hook; false there, when they aren't on and for a tag that isn't one. Bundles need `"hooks": @API:set_name_tag@`.
 
 #### Server hooks for plugin ports: NPCs
 
@@ -4074,7 +4112,8 @@ it moves only what the player sees, not where they are or aim.
 
 ### A player's motion
 
-`crates/horizon-client/src/game/native_motion.rs`: a push on a client, a flying speed on a server.
+`crates/horizon-client/src/game/native_motion.rs`: a push on a client, a flying speed on a server. A velocity for a
+server player is `native_set_player_velocity`, in `native_player_state.rs`.
 
 - `native_push_player([x, y, z])` (client) adds a push to the player's own velocity, in blocks a tick, as an
   explosion's knockback does: the player's own game moves them. The server didn't send it, so on a LAN or dedicated
@@ -4088,6 +4127,16 @@ it moves only what the player sees, not where they are or aim.
   (sprinting) a player flies more than 10 blocks a tick: anyone but the single-player owner then meets the server's
   moved-too-quickly check, which can send them back, as vanilla's does. It answers false for a player not on this server,
   on a client, and inside a player's hook (call it from a tick hook).
+- `native_set_player_velocity(uuid, [x, y, z])` (server, `host.set_player_velocity`) gives a server player a velocity in
+  blocks a tick, as Bukkit's `Player.setVelocity` does (`Entity.setDeltaMovement` and `hurtMarked`): the server's copy
+  takes it and their client is sent `SetEntityMotion`, which it takes as its own motion, as it takes a knockback. The
+  anticheat's movement replay counts the packet as the server's push, so a launch or a knockback a mod sends is not a
+  move it can't explain. `native_entity_set_velocity` and `native_entity_push` leave players alone (their client moves
+  them); this is the call for one. Outside a player's hook the packet goes out at once; inside the player's own hook it
+  goes with the tick's marked velocity, and other players are not reached there (call it from a tick hook to push
+  several). Each axis is cut to -3.9..=3.9, and an upward velocity lifts the player off the ground. It answers false for
+  a value that is not a number, a player not reached, a dead one, and on a client. Bundles need
+  `"hooks": @API:set_player_velocity@`.
 
 ### Health HUD rows a mod draws
 
@@ -5068,6 +5117,9 @@ the mod: a vanilla client decodes the count with vanilla's 1 to 99 and cannot sh
 
 ## Trait mods (draft)
 
+Rift Event Server has no launcher: its own trait mods are crates in `rift-mods/`, linked into the engine by
+`crates/rift-engine` ([rift-mods.md](rift-mods.md)).
+
 `cargo horizon-mod new <path> --template native --horizon <commit>` writes a trait mod to start from: the bundle's
 `horizon-mixin.toml`, pinned to that Horizon commit, and an `[api]` crate whose `hooks()` greets each player who
 joins. Its files are what a bundle may carry ([api/mod-files.md](api/mod-files.md)), so the launcher builds the folder
@@ -5307,9 +5359,11 @@ Every `Host` method defaults to a panic naming it (`not implemented: Host::tell`
 only what its hook calls, and an unexpected call fails loudly. Drive the hook through
 `horizon_client::mod_api::dispatch_<hook>(&mut host, &mods, args…)`, which builds the event as the game does.
 If a `Host` method returns a game value a test can't build, a double can return `None` instead, as with
-`acting_player() -> Option<NativeServerPlayer>`. If the dispatch function itself takes an unconstructible value,
-such as `dispatch_perform_command`'s `&NativeServerPlayer`, test the logic beneath the hook instead. The level
-hosts are small enough to implement whole. NeoForge's GameTest is the in-game counterpart.
+`acting_player() -> Option<NativeServerPlayer>`. A `NativeServerPlayer`, which `dispatch_perform_command` takes
+and `server_players()` gives, is made with `NativeServerPlayer::new(uuid, name, permission)` and its public fields
+set after (`player.fake = true`); the context of `dispatch_server_tick` is `NativeLifecycleContext::new(authority,
+epoch, tick)`. If the dispatch function takes another value a test can't build, test the logic beneath the hook
+instead. The level hosts are small enough to implement whole. NeoForge's GameTest is the in-game counterpart.
 
 ```rust
 struct Stone;

@@ -37,7 +37,7 @@ pub fn check(root: &Path, resources: &Path) -> Result<Vec<String>, String> {
     let manifest_path = resources.join("horizon-resources.json");
     if !manifest_path.is_file() {
         return Ok(vec![format!(
-            "{} is not prepared: horizon-prepare --prepare",
+            "{} is not prepared: rift-prepare --prepare",
             resources.display()
         )]);
     }
@@ -46,14 +46,14 @@ pub fn check(root: &Path, resources: &Path) -> Result<Vec<String>, String> {
     let int = |value: Option<&Value>| value.and_then(Value::as_i64);
     if int(manifest.get("schema")) != Some(SCHEMA) {
         lacking.push(format!(
-            "an older layout (schema {}, this preparer writes {SCHEMA}): horizon-prepare --prepare",
+            "an older layout (schema {}, this preparer writes {SCHEMA}): rift-prepare --prepare",
             int(manifest.get("schema")).map_or("none".into(), |s| s.to_string())
         ));
     }
     let minecraft = manifest.get("minecraft").and_then(Value::as_str);
     if minecraft != Some(lock.version.as_str()) {
         lacking.push(format!(
-            "prepared for Minecraft {}, this preparer pins {}: horizon-prepare --prepare",
+            "prepared for Minecraft {}, this preparer pins {}: rift-prepare --prepare",
             minecraft.unwrap_or("unknown"),
             lock.version
         ));
@@ -62,12 +62,12 @@ pub fn check(root: &Path, resources: &Path) -> Result<Vec<String>, String> {
     let made_by = int(stamp.as_ref().and_then(|s| s.get("output_version")));
     if made_by != Some(i64::from(OUTPUT_VERSION)) {
         lacking.push(format!(
-            "made by output version {}, this preparer makes {OUTPUT_VERSION}: horizon-prepare --prepare",
+            "made by output version {}, this preparer makes {OUTPUT_VERSION}: rift-prepare --prepare",
             made_by.map_or("unknown".into(), |v| v.to_string())
         ));
     }
     for (command, what) in missing_extras(resources) {
-        lacking.push(format!("{what} missing: horizon-prepare {command}"));
+        lacking.push(format!("{what} missing: rift-prepare {command}"));
     }
     Ok(lacking)
 }
@@ -204,7 +204,7 @@ mod tests {
         let lacking = check(&root, &root.join("out")).unwrap();
         assert_eq!(lacking.len(), 1);
         assert!(
-            lacking[0].ends_with("horizon-prepare --prepare"),
+            lacking[0].ends_with("rift-prepare --prepare"),
             "{lacking:?}"
         );
     }
@@ -240,7 +240,7 @@ mod tests {
         let lacking = check(&root, &out).unwrap();
         assert_eq!(lacking.len(), 2, "{lacking:?}");
         assert!(lacking[0].starts_with("made by output version unknown"));
-        assert!(lacking[1].ends_with("horizon-prepare fonts"));
+        assert!(lacking[1].ends_with("rift-prepare fonts"));
     }
 
     #[test]
@@ -290,7 +290,7 @@ mod tests {
             std::thread::spawn(move || {
                 let said = std::cell::Cell::new(false);
                 let _lock = crate::hold_lock(&root, &|line| {
-                    said.set(line.starts_with("Waiting for another horizon-prepare"))
+                    said.set(line.starts_with("Waiting for another rift-prepare"))
                 })
                 .unwrap();
                 waited.store(said.get(), std::sync::atomic::Ordering::SeqCst);

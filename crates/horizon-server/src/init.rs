@@ -1,4 +1,4 @@
-//! `horizon-server init`: the first run (docs/server.md, section 3). It asks about the EULA, the world, the
+//! `rift-server init`: the first run (docs/server.md, section 3). It asks about the EULA, the world, the
 //! port and who may join, imports an existing `server.properties`, finds the game, and writes `server.toml`.
 //! Every question has a flag, so it also runs unattended (Docker, scripts).
 
@@ -98,12 +98,15 @@ impl Prompt {
     }
 }
 
+/// The MOTD `init` gives a new server, in place of vanilla's "A Minecraft Server".
+const RIFT_MOTD: &str = "Rift Event Server";
+
 pub fn run(dir: &Path, answers: Answers) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let toml_path = dir.join(config::FILE);
     if toml_path.exists() {
         return Err(format!(
-            "{} already exists: this server is set up. Edit it, or start the server with `horizon-server run`",
+            "{} already exists: this server is set up. Edit it, or start the server with `rift-server run`",
             toml_path.display()
         ));
     }
@@ -124,7 +127,10 @@ pub fn run(dir: &Path, answers: Answers) -> Result<(), String> {
         );
         cfg
     } else {
-        Config::default()
+        // A new server starts with Rift's own MOTD (vanilla's default is "A Minecraft Server").
+        let mut cfg = Config::default();
+        cfg.server.motd = RIFT_MOTD.into();
+        cfg
     };
 
     // 1. The EULA: only a yes writes eula=true.
@@ -167,6 +173,9 @@ pub fn run(dir: &Path, answers: Answers) -> Result<(), String> {
             .parse()
             .map_err(|_| "the port must be a number from 1 to 65535".to_owned())?,
     };
+    // What `server.toml` will hold is checked as every start checks it: a port or a world name it would
+    // refuse is refused here, before anything is written, not at the first `run`.
+    cfg.check()?;
     if std::net::TcpListener::bind(("0.0.0.0", cfg.server.port)).is_err() {
         println!(
             "Port {} is in use right now: stop what uses it, or change server.port in server.toml.",
@@ -223,7 +232,7 @@ pub fn run(dir: &Path, answers: Answers) -> Result<(), String> {
 
     std::fs::write(&toml_path, config::render(&cfg)).map_err(|e| e.to_string())?;
     println!(
-        "Wrote {}. Start the server with: horizon-server run --dir {}",
+        "Wrote {}. Start the server with: rift-server run --dir {}",
         toml_path.display(),
         dir.display()
     );
@@ -246,7 +255,10 @@ fn add_players(
 ) -> Result<(), String> {
     if !players.is_empty() {
         let mut white = WhiteList::new(dir.join("whitelist.json"));
-        let _ = white.load();
+        // A list it can't read would be replaced by only these players: stop instead.
+        white.load().map_err(|e| {
+            format!("whitelist.json: {e}; fix it or move it away, then run init again")
+        })?;
         for name in players {
             white.add(WhiteEntry {
                 user: crate::lists::account(name, online)?,
@@ -256,7 +268,8 @@ fn add_players(
     }
     if let Some(name) = op {
         let mut ops = OpList::new(dir.join("ops.json"));
-        let _ = ops.load();
+        ops.load()
+            .map_err(|e| format!("ops.json: {e}; fix it or move it away, then run init again"))?;
         ops.add(OpEntry {
             user: crate::lists::account(name, online)?,
             level: 4,
@@ -270,6 +283,22 @@ fn add_players(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_whitelist_init_cannot_read_is_left_alone() {
+        let dir =
+            std::env::temp_dir().join(format!("horizon-server-init-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let theirs = "[{\"uuid\": \"x\", \"name\": \"Kim\",}]";
+        std::fs::write(dir.join("whitelist.json"), theirs).unwrap();
+        assert!(add_players(&dir, &["Alex".into()], None, false).is_err());
+        assert_eq!(
+            std::fs::read_to_string(dir.join("whitelist.json")).unwrap(),
+            theirs
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn unattended_init_writes_everything() {
@@ -298,6 +327,7 @@ mod tests {
             ("survival", "12345", 25599)
         );
         assert!(eula::agreed(&dir.join("eula.txt")).unwrap());
+        assert_eq!(cfg.server.motd, "Rift Event Server");
         assert!(!cfg.server.online_mode);
         let white = std::fs::read_to_string(dir.join("whitelist.json")).unwrap();
         assert!(
@@ -326,5 +356,40 @@ mod tests {
         assert!(!dir.join(config::FILE).exists());
         assert!(!eula::agreed(&dir.join("eula.txt")).unwrap());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `Config::check` refuses these at every start, so `init` must not write a `server.toml` that holds them.
+    #[test]
+    fn init_refuses_a_port_or_world_name_the_server_would_refuse() {
+        for (label, world, port, refusal) in [
+            ("port-0", None, Some(0), "server.port"),
+            ("world-slash", Some("a/b"), Some(25597), "world.name"),
+            ("world-dotdot", Some(".."), Some(25597), "world.name"),
+            ("world-logs", Some("logs"), Some(25597), "world.name"),
+        ] {
+            let dir = std::env::temp_dir().join(format!(
+                "horizon-server-init-refuses-{label}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            let answers = Answers {
+                eula: true,
+                world: world.map(str::to_owned),
+                port,
+                whitelist: Some(false),
+                online: Some(false),
+                yes: true,
+                ..Default::default()
+            };
+            match run(&dir, answers) {
+                Err(e) => assert!(e.contains(refusal), "{label}: {e}"),
+                Ok(()) => panic!("{label}: init accepted it"),
+            }
+            assert!(
+                !dir.join(config::FILE).exists(),
+                "{label}: server.toml written"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 }

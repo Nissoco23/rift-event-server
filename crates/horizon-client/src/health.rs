@@ -85,6 +85,15 @@ pub fn damage_pre(hurting: Hurting<'_>, amount: &mut f32) {
         };
     }
 }
+thread_local! {
+    static PLAYER_HIT: Cell<Option<(f32, bool)>> = const { Cell::new(None) };
+}
+/// While [`DAMAGE_PRE`] runs for a player: the health they had before the hit, and whether either
+/// hand holds a death-protection item (`LivingEntity.checkTotemDeathProtection` would fire).
+/// None outside that call, and for a mob.
+pub fn player_hit() -> Option<(f32, bool)> {
+    PLAYER_HIT.get()
+}
 /// [`DAMAGE_POST`] with what came off the health (nothing while it is unset).
 pub fn damage_post(hurting: Hurting<'_>, amount: f32) {
     if let Some(hook) = DAMAGE_POST.get() {
@@ -826,6 +835,12 @@ impl ServerDamageEnvironment<Attributes> for Environment<'_> {
         damage_pre(Hurting::Player(self.entity, self.hurt_source()), damage);
         Ok(())
     }
+    fn damage_pre_at(&mut self, health: f32, damage: &mut f32) -> io::Result<()> {
+        PLAYER_HIT.set(Some((health, self.totem)));
+        let result = self.damage_pre(damage);
+        PLAYER_HIT.set(None);
+        result
+    }
     fn damage_post(&mut self, damage: f32) -> io::Result<()> {
         damage_post(Hurting::Player(self.entity, self.hurt_source()), damage);
         Ok(())
@@ -1347,6 +1362,10 @@ mod tests {
     /// What the `LivingDamageEvent` hooks of these tests were handed: the
     /// entity, Post (true) or Pre, and the amount.
     static TAKEN: std::sync::Mutex<Vec<(i32, bool, f32)>> = std::sync::Mutex::new(Vec::new());
+    /// What `player_hit` said while each entity's Pre hook ran: a player's health before the hit
+    /// and whether a totem was held, none for a mob.
+    static HIT_STATE: std::sync::Mutex<Vec<(i32, Option<(f32, bool)>)>> =
+        std::sync::Mutex::new(Vec::new());
     /// Sets the native `LivingDamageEvent.Pre` and `.Post` hooks of these
     /// tests (global: they stay set for the process), for entities 9201 to
     /// 9205 and 9211 to 9212 only: they record what each is handed, and Pre
@@ -1358,13 +1377,17 @@ mod tests {
                 Hurting::Player(e, _) | Hurting::Dragon(e, _) | Hurting::ArmorStand(e, _) => *e,
                 Hurting::Mob(mob, _) => mob.id as i32,
             };
-            matches!(entity, 9201..=9205 | 9211..=9212).then_some(entity)
+            matches!(entity, 9201..=9205 | 9211..=9213).then_some(entity)
         }
         fn pre(hurting: Hurting<'_>, amount: &mut f32) {
             let Some(entity) = entity(&hurting) else {
                 return;
             };
             TAKEN.lock().unwrap().push((entity, false, *amount));
+            HIT_STATE
+                .lock()
+                .unwrap()
+                .push((entity, super::player_hit()));
             match entity {
                 9202 | 9212 => *amount /= 2.0,
                 9203 => *amount = -5.0,
@@ -1442,6 +1465,9 @@ mod tests {
         assert!(infinite.health <= 0.0);
         assert_eq!(taken(9204), [(false, 2.0), (true, 0.0)]);
         assert_eq!(taken(9205), [(false, 2.0), (true, f32::MAX)]);
+        // A mob has no player's health and totem to tell.
+        let seen = HIT_STATE.lock().unwrap();
+        assert!(seen.iter().filter(|s| s.0 == 9201).all(|s| s.1.is_none()));
     }
 
     /// Needs the prepared data in `.local/horizon-client/26.3`; skipped
@@ -1472,6 +1498,21 @@ mod tests {
         assert!(halved.hurt(health, rules, id, 5.0).unwrap());
         assert_eq!(halved.health.health(), 17.5);
         assert_eq!(taken(9212), [(false, 5.0), (true, 2.5)]);
+        // The hook is told the health a player had before the hit, and whether a totem is held,
+        // for that hit only.
+        let state = |entity| {
+            let seen = HIT_STATE.lock().unwrap();
+            seen.iter()
+                .filter(|s| s.0 == entity)
+                .map(|s| s.1)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(state(9211), [Some((20.0, false))]);
+        let mut totem = player(9213);
+        totem.health.totem_ready = true;
+        assert!(totem.hurt(health, rules, id, 5.0).unwrap());
+        assert_eq!(state(9213), [Some((20.0, true))]);
+        assert_eq!(super::player_hit(), None, "nothing is left set after a hit");
     }
 
     /// What the knockback hook of these tests saw: the entity, the hit that

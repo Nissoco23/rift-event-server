@@ -12,15 +12,15 @@ use std::{
 };
 
 /// The game's program names, most specific first: the server build (the game without sound or
-/// controllers, so it needs neither ALSA nor udev on Linux; `horizon-server-linux-x86_64.tar.gz` holds it),
+/// controllers, so it needs neither ALSA nor udev on Linux; scripts/build.sh builds it as `rift-engine`),
 /// else the full game.
-const PROGRAMS: [&str; 2] = ["horizon-engine", "horizon-client"];
+const PROGRAMS: [&str; 3] = ["rift-engine", "horizon-engine", "horizon-client"];
 
 fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
-/// The game program: `engine.path`, else one installed beside `horizon-server` (in the release in use when
+/// The game program: `engine.path`, else one installed beside `rift-server` (in the release in use when
 /// it was installed by the installers), else one on the PATH.
 pub fn program(config: &Config, dir: &Path) -> Result<PathBuf, String> {
     program_in(config, dir, crate::update::Install::find().as_ref())
@@ -58,8 +58,8 @@ pub fn program_in(
         })
         .find(|p| p.is_file())
         .ok_or_else(|| {
-            "the game program (horizon-client) is neither beside horizon-server nor on the PATH: \
-             install it there, or set engine.path in server.toml"
+            "the game program (rift-engine) is neither beside rift-server nor on the PATH: \
+             scripts/build.sh puts both in dist/; or set engine.path in server.toml"
                 .into()
         })
 }
@@ -104,8 +104,8 @@ fn start_failure(program: &Path, code: Option<i32>, stderr: &str) -> String {
         && (reason.contains("libasound") || reason.contains("libudev"))
     {
         text.push_str(
-            "\nThe full game needs ALSA's and udev's libraries (libasound.so.2, libudev.so.1). Install the \
-             server build, which needs neither (packaging/server/install.sh picks it on Linux), or the \
+            "\nThe full game needs ALSA's and udev's libraries (libasound.so.2, libudev.so.1). Build the \
+             server engine with scripts/build.sh, which needs neither, or install the \
              libraries:\n  Debian, Ubuntu: sudo apt install libasound2 libudev1   (Ubuntu 24.04 and later: \
              libasound2t64)\n  Fedora, RHEL: sudo dnf install alsa-lib systemd-libs\n  Arch: sudo pacman -S \
              alsa-lib systemd-libs\n  NixOS: enable programs.nix-ld with alsa-lib and udev in its libraries",
@@ -133,7 +133,7 @@ pub fn resource_candidates(config: &Config, dir: &Path, program: Option<&Path>) 
     out
 }
 
-/// The prepared game files: a folder holding the manifest every `horizon-prepare` run writes
+/// The prepared game files: a folder holding the manifest every `rift-prepare` run writes
 /// (`asset-index.json` comes only with the optional sounds, which a server doesn't need).
 pub fn resources(config: &Config, dir: &Path, program: Option<&Path>) -> Result<PathBuf, String> {
     let candidates = resource_candidates(config, dir, program);
@@ -147,15 +147,15 @@ pub fn resources(config: &Config, dir: &Path, program: Option<&Path>) -> Result<
                 .map(|d| format!("  {}", d.display()))
                 .collect();
             format!(
-                "no prepared game files. Horizon reads them from your own copy of Minecraft 26.3:\n\
-                 prepare them with `horizon-prepare --prepare --server-jar PATH` (or the launcher) and copy \
+                "no prepared game files. Rift reads them from your own copy of Minecraft 26.3:\n\
+                 prepare them with `rift-prepare --prepare --server-jar PATH` and copy \
                  the folder to resources/ here, or set engine.resources in server.toml. Looked in:\n{}",
                 tried.join("\n")
             )
         })
 }
 
-/// The files `horizon-prepare` derives from the game and the engine reads at start (docs/hosting.md: a folder
+/// The files `rift-prepare` derives from the game and the engine reads at start (docs/hosting.md: a folder
 /// prepared before `registries.json` and `commands.json` were kept stops with "registries.json not found").
 const PREPARED_FILES: [&str; 4] = [
     "facts.json",
@@ -169,7 +169,7 @@ const PREPARED_DIRS: [&str; 2] = ["assets/minecraft/font", "assets/minecraft/tex
 
 /// Checks a prepared folder before the engine starts on it, so a half-copied or stale folder is named
 /// instead of surfacing as the engine's `os error 2` at every restart. Checks what the manifest
-/// (`horizon-resources.json`, written last by `horizon-prepare`) records: the derived files are there and
+/// (`horizon-resources.json`, written last by `rift-prepare`) records: the derived files are there and
 /// match the hashes it holds, and the asset folders the engine loads from aren't empty.
 pub fn check_prepared(resources: &Path) -> Result<(), String> {
     let manifest = std::fs::read_to_string(resources.join("horizon-resources.json"))
@@ -216,7 +216,7 @@ pub fn check_prepared(resources: &Path) -> Result<(), String> {
     }
     Err(format!(
         "the prepared game files in {} are incomplete or damaged:\n  {}\nPrepare them again with \
-         `horizon-prepare --prepare --server-jar PATH` (or the launcher), or copy the whole prepared folder to \
+         `rift-prepare --prepare --server-jar PATH` or copy the whole prepared folder to \
          the server again.",
         resources.display(),
         problems.join("\n  ")
@@ -294,6 +294,9 @@ pub fn control_path(dir: &Path) -> PathBuf {
     dir.join(".horizon/engine.json")
 }
 
+/// How long a [`Control`] waits for each reply.
+pub const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// A connection to the game's control endpoint: one JSON line asked, one answered.
 pub struct Control {
     writer: TcpStream,
@@ -311,7 +314,7 @@ impl Control {
             .ok_or_else(bad)?;
         let token = v["token"].as_str().ok_or_else(bad)?;
         let writer = TcpStream::connect((Ipv4Addr::LOCALHOST, port))?;
-        writer.set_read_timeout(Some(Duration::from_secs(30)))?;
+        writer.set_read_timeout(Some(REPLY_TIMEOUT))?;
         let mut control = Self {
             reader: BufReader::new(writer.try_clone()?),
             writer,
@@ -326,7 +329,20 @@ impl Control {
         Ok(control)
     }
 
+    /// How long [`Self::ask`] waits for a reply; [`REPLY_TIMEOUT`] unless changed.
+    pub fn set_reply_timeout(&self, wait: Duration) -> std::io::Result<()> {
+        self.writer.set_read_timeout(Some(wait))
+    }
+
+    /// One request: the endpoint reads a line per request, so a line break would make the rest
+    /// a request of its own. Refused before anything is sent.
     pub fn ask(&mut self, line: &str) -> std::io::Result<serde_json::Value> {
+        if line.contains(['\n', '\r']) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "a request is one line",
+            ));
+        }
         writeln!(self.writer, "{line}")?;
         self.writer.flush()?;
         let mut reply = String::new();
@@ -341,6 +357,49 @@ impl Control {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_request_with_a_line_break_is_refused_unsent() {
+        let dir = std::env::temp_dir().join(format!("horizon-control-line-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".horizon")).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::fs::write(
+            control_path(&dir),
+            format!("{{\"port\": {port}, \"token\": \"t\"}}"),
+        )
+        .unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut line = String::new();
+            while reader.read_line(&mut line).unwrap_or(0) > 0 {
+                tx.send(line.trim().to_owned()).unwrap();
+                line.clear();
+                let _ = writer.write_all(b"{\"ok\":true}\n");
+            }
+        });
+        let mut control = Control::connect(&dir).unwrap();
+        for request in [
+            "console kick Kim0 x\nconsole op Mallory",
+            "console say a\rb",
+        ] {
+            let refused = control.ask(request).unwrap_err();
+            assert_eq!(refused.kind(), std::io::ErrorKind::InvalidInput);
+        }
+        control.ask("console list").unwrap();
+        drop(control);
+        let heard: Vec<String> = rx.iter().collect();
+        assert_eq!(
+            heard,
+            ["auth t", "console list"],
+            "nothing of the refused requests was sent"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn low_memory_turns_huge_pages_off_for_the_game() {
@@ -400,13 +459,13 @@ mod tests {
         let config = Config::default();
         let server = root.join("server");
         assert!(resources(&config, &server, Some(&program)).is_err());
-        // What `horizon-prepare` writes on every run; no asset index without `horizon-prepare sounds`.
+        // What `rift-prepare` writes on every run; no asset index without `rift-prepare sounds`.
         std::fs::write(prepared.join("horizon-resources.json"), "{}").unwrap();
         assert_eq!(resources(&config, &server, Some(&program)), Ok(prepared));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
-    /// A folder as `horizon-prepare` leaves it, as far as `check_prepared` looks.
+    /// A folder as `rift-prepare` leaves it, as far as `check_prepared` looks.
     fn prepared_folder(name: &str) -> PathBuf {
         let root =
             std::env::temp_dir().join(format!("horizon-server-{name}-{}", std::process::id()));

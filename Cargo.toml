@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["launcher", "crates/horizon-telemetry-server", "crates/horizon-mod-registry", "third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys"]
+exclude = ["third_party/wgpu-hal", "third_party/naga", "third_party/libmimalloc-sys"]
 members = [
     "crates/horizon-addresses",
     "crates/horizon-core",
@@ -19,7 +19,7 @@ members = [
     "crates/horizon-server-files",
     "crates/horizon-anticheat",
     "crates/horizon-chat-filter",
-    # The Model Context Protocol, shared by horizon-ctl, horizon-server and the launcher.
+    # The Model Context Protocol, shared by horizon-ctl and horizon-server.
     "crates/horizon-mcp",
     "crates/horizon-server",
     "crates/horizon-bots",
@@ -31,25 +31,29 @@ members = [
     "crates/horizon-system",
     "crates/horizon-platform",
     "crates/horizon-hooks",
-    "crates/horizon-game",
-    "crates/horizon-official",
-    "crates/horizon-heartbeat",
-    "crates/horizon-discord",
-    "crates/horizon-official-servers",
     "crates/horizon-bench",
     "crates/horizon-friends",
-    "crates/horizon-relay",
     "crates/horizon-mods",
     "crates/horizon-mod-api-gen",
     "crates/horizon-mod-api-gen/dispatch-tests",
-    "crates/cargo-horizon-mod",
-    "crates/horizon-port-pack",
     "crates/horizon-shaders",
     "crates/horizon-optifine",
     "crates/horizon-polytone",
     "crates/horizon-shader-api",
     "crates/horizon-release-sign",
     "crates/horizon-mod-deps",
+    # The engine program of the server, with the mods of rift-mods/ linked in (docs/rift-mods.md).
+    "crates/rift-engine",
+    # How Rift's messages look: markup into text, and the command error (used by the mods).
+    "crates/rift-chat",
+    # Rift's own mods, one crate each, linked into rift-engine.
+    "rift-mods/nick",
+    "rift-mods/sculkstorm",
+    "rift-mods/viewdistance",
+    "rift-mods/essentials",
+    "rift-mods/throwingdiscs",
+    "rift-mods/hardcore",
+    "rift-mods/voicechat",
     "xtask",
 ]
 resolver = "2"
@@ -58,6 +62,8 @@ resolver = "2"
 edition = "2024"
 license = "MIT"
 rust-version = "1.95"
+authors = ["Nissoco"]
+repository = "https://github.com/Nissoco23/rift-event-server"
 
 # Ports mirror vanilla's Java signatures, index loops and nested generic types
 # one to one so they can be checked against the decompiled sources.

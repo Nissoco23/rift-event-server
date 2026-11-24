@@ -1,4 +1,4 @@
-//! `horizon-prepare`: prepares Horizon's resources from your own Minecraft Java Edition.
+//! `rift-prepare`: prepares the server's game files from your own Minecraft Java Edition.
 //! Its flags are the ones tools/prepare_native_client.py took.
 
 use std::io::Write;
@@ -13,19 +13,19 @@ const VERSION: &str = match option_env!("HORIZON_VERSION") {
 };
 
 const HELP: &str = "\
-horizon-prepare: prepare Horizon's resources from your own Minecraft Java Edition
+rift-prepare: prepare the server's game files from your own Minecraft Java Edition
 
-Usage: horizon-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [--prism-dir PATH] [--root PATH] [--output PATH]
+Usage: rift-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [--prism-dir PATH] [--root PATH] [--output PATH]
                        [--version-json PATH] [--client-jar PATH] [--libraries-dir PATH] [--assets-dir PATH]
                        [--java-home PATH] [--complete] [--progress json]
-       horizon-prepare --check [--root PATH] [--output PATH]
-       horizon-prepare --launch-api [--root PATH]
-       horizon-prepare compile-exporters [--root PATH]
-       horizon-prepare sounds [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
-       horizon-prepare panorama [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
-       horizon-prepare fonts [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
-       horizon-prepare packs [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
-       horizon-prepare languages [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
+       rift-prepare --check [--root PATH] [--output PATH]
+       rift-prepare --launch-api [--root PATH]
+       rift-prepare compile-exporters [--root PATH]
+       rift-prepare sounds [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
+       rift-prepare panorama [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
+       rift-prepare fonts [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
+       rift-prepare packs [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
+       rift-prepare languages [--minecraft-dir PATH] [--version-json PATH] [--assets-dir PATH] [--root PATH] [--output PATH]
 
   --prepare             Import the pinned game files from your own copy first
   --server-jar PATH     The pinned server jar you downloaded yourself
@@ -43,7 +43,7 @@ Usage: horizon-prepare [--prepare] [--server-jar PATH] [--minecraft-dir PATH] [-
                         import beside --root that is still verified is reused instead)
   --java-home PATH      A Java runtime of the pinned version that your launcher manages, tried
                         after JAVA_HOME and the PATH, before the official launcher's runtimes
-  --root PATH           The Horizon folder to prepare (default: the folder this program is
+  --root PATH           The Rift folder to prepare (default: the folder this program is
                         in, else the nearest folder above the current one with research-lock.json)
   --output PATH         Where the resources go (default: <root>/.local/horizon-client/<version>);
                         the exporters' scratch files stay in <root>/.local
@@ -66,13 +66,13 @@ The resources go to <root>/.local/horizon-client/<version>, or --output; pass th
 horizon-client --resources. Exit codes: 0 done, 1 failed (or --check found gaps), 2 a refused
 command line (docs/api/launch.md).
 
-horizon-prepare panorama repairs the classic menu background in existing resources without Java.
-horizon-prepare fonts adds the GNU Unifont glyphs (characters the bitmap fonts lack) the same way.
-horizon-prepare packs adds the built-in Programmer Art and High Contrast resource packs the same way.
-horizon-prepare languages adds the bundled languages and the language list the JAR lacks the same way.
+rift-prepare panorama repairs the classic menu background in existing resources without Java.
+rift-prepare fonts adds the GNU Unifont glyphs (characters the bitmap fonts lack) the same way.
+rift-prepare packs adds the built-in Programmer Art and High Contrast resource packs the same way.
+rift-prepare languages adds the bundled languages and the language list the JAR lacks the same way.
 Full preparation also imports all four after extracting the client JAR's placeholders.
 
-horizon-prepare sounds copies the pinned version's sounds (about 380 MB) from the official
+rift-prepare sounds copies the pinned version's sounds (about 380 MB) from the official
 launcher's asset store into the same folder, checking every file. It is optional: without it the
 game is silent. Nothing is downloaded; it needs the version played once from the official launcher.
 ";
@@ -178,19 +178,19 @@ fn main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
             "-V" | "--version" => {
-                println!("horizon-prepare {VERSION}");
+                println!("rift-prepare {VERSION}");
                 return ExitCode::SUCCESS;
             }
             _ => Err(format!("unrecognized argument: {text}")),
         };
         if let Err(e) = parsed {
-            eprintln!("horizon-prepare: error: {e}\n\n{HELP}");
+            eprintln!("rift-prepare: error: {e}\n\n{HELP}");
             return ExitCode::from(2);
         }
     }
     let Some(root) = root.or_else(default_root) else {
         eprintln!(
-            "horizon-prepare: error: no research-lock.json beside this program or above the current folder; pass --root"
+            "rift-prepare: error: no research-lock.json beside this program or above the current folder; pass --root"
         );
         return ExitCode::from(2);
     };
@@ -209,11 +209,11 @@ fn main() -> ExitCode {
     }
     if check {
         if options.import || options.server_jar.is_some() {
-            eprintln!("horizon-prepare: error: --check prepares nothing; leave out --prepare and --server-jar");
+            eprintln!("rift-prepare: error: --check prepares nothing; leave out --prepare and --server-jar");
             return ExitCode::from(2);
         }
         if json || complete {
-            eprintln!("horizon-prepare: error: --progress and --complete apply to preparing; leave them out with --check");
+            eprintln!("rift-prepare: error: --progress and --complete apply to preparing; leave them out with --check");
             return ExitCode::from(2);
         }
         return check_resources(&options);

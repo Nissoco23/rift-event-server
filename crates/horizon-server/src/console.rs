@@ -1,4 +1,4 @@
-//! `horizon-server console` (docs/server.md, section 5): attach to the running server. The recent log, then
+//! `rift-server console` (docs/server.md, section 5): attach to the running server. The recent log, then
 //! every new line as it happens (the control API's event stream), a header with the TPS, MSPT, players and
 //! RAM refreshed every second, and a command line: each line typed runs as a console command. Ctrl-D
 //! detaches and leaves the server running. Plain ANSI, no TUI framework; when stdout isn't a terminal, plain
@@ -101,7 +101,7 @@ pub fn header_line(status: &Value) -> String {
     let sample = &status["sample"];
     let game = &sample["game"];
     let mut parts = vec![format!(
-        "Horizon server {} · {}",
+        "Rift server {} · {}",
         status["version"].as_str().unwrap_or_default(),
         status["phase"].as_str().unwrap_or("?")
     )];
@@ -152,11 +152,11 @@ mod tests {
         });
         assert_eq!(
             header_line(&status),
-            "Horizon server 0.1.0 · running · 20.0 TPS · 3.2 ms/tick · 2/20 players · 512 MB"
+            "Rift server 0.1.0 · running · 20.0 TPS · 3.2 ms/tick · 2/20 players · 512 MB"
         );
         assert_eq!(
             header_line(&json!({ "version": "0.1.0", "phase": "restarting", "sample": null })),
-            "Horizon server 0.1.0 · restarting"
+            "Rift server 0.1.0 · restarting"
         );
     }
 

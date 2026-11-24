@@ -448,9 +448,7 @@ impl Game<'_> {
         // the server's own source, "Server".
         let who = match self.command_source.and_then(|s| s.entity) {
             Some(entity) => self.target_name(entity),
-            None if self.console_broadcast.is_some() => {
-                Text::literal(if self.rcon_source { "Rcon" } else { "Server" }.to_owned())
-            }
+            None if self.console_broadcast.is_some() => self.server_name(),
             None => self.player_display_name(),
         };
         let line = Text::translate("chat.type.admin", &[who, message])
@@ -459,24 +457,10 @@ impl Game<'_> {
         self.admin_feedback.push((line, ops, console));
     }
     /// Player.getDisplayName: the name (team-formatted), suggesting a
-    /// `/tell`, showing the player on hover, inserting the name.
+    /// `/tell`, showing the player on hover, inserting the name; a nickname
+    /// takes the name's place with the hover (`player_text`).
     pub(super) fn player_display_name(&self) -> Text {
-        let name = self.acting_player_name().to_owned();
-        let Some(uuid) = self.lan_acting_uuid else {
-            return self.target_name(Target::Player);
-        };
-        self.target_name(Target::Player).with_component_fields(vec![
-            (
-                "click_event".into(),
-                serde_json::json!({"action": "suggest_command", "command": format!("/tell {name} ")}),
-            ),
-            (
-                "hover_event".into(),
-                serde_json::json!({"action": "show_entity", "id": "minecraft:player",
-                    "uuid": horizon_protocol::crypto::uuid_string(uuid), "name": name}),
-            ),
-            ("insertion".into(), name.into()),
-        ])
+        self.target_name(Target::Player)
     }
     fn source_position(&self) -> [f64; 3] {
         if let Some(s) = &self.command_source {
@@ -2510,6 +2494,7 @@ impl Game<'_> {
                 // AbstractBoat.remove: a killed boat drops its lead.
                 if let Some(i) = self.boats.iter().position(|b| b.id == id) {
                     self.release_vehicle_container(id);
+                    self.unpack_boat_loot(i, false);
                     let b = self.boats.remove(i);
                     // AbstractChestBoat.remove, after the live menu writes
                     // back its slots.
@@ -4460,7 +4445,7 @@ impl Game<'_> {
                                 .map(|cart| cart.command.name())
                         })
                     })
-                    .unwrap_or_else(|| Text::literal("Server")),
+                    .unwrap_or_else(|| self.server_name()),
             },
             None => self.player_display_name(),
         };

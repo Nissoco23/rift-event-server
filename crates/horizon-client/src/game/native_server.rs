@@ -47,6 +47,12 @@ fn parser(kind: &str) -> Option<(&'static str, Value)> {
             "minecraft:entity",
             json!({"amount": "single", "type": "players"}),
         ),
+        // Several players, as `/kick`'s `targets`: the client offers `@a`, `@p`, `@r` and `@s`
+        // besides the names.
+        "players" => (
+            "minecraft:entity",
+            json!({"amount": "multiple", "type": "players"}),
+        ),
         "item" => ("minecraft:item_stack", Value::Null),
         "block_pos" => ("minecraft:block_pos", Value::Null),
         _ => return None,
@@ -558,13 +564,17 @@ impl Game<'_> {
         true
     }
     /// Shows `nickname` in place of that player's name in chat (their
-    /// messages, `/me`, `/msg`) and in the Tab list; None shows their name
-    /// again. Hovering the shown name gives the real one, which stays in the
-    /// log, commands, selectors and the server's events. Kept until a mod
-    /// sets it again or the server stops (also if they leave and come back).
-    /// Plain text: the mod checks it (`native_text_allowed`, its length,
-    /// other players' names). Only where no player's state is swapped in,
-    /// as `native_run_command`; false there and when they aren't on. API
+    /// messages, `/me`, `/msg`), in the Tab list, and wherever the server
+    /// writes who they are: death and advancement lines, `/list`, command
+    /// feedback; None shows their name again. The shown name hides the
+    /// player: hovering it shows nothing of them and clicking it suggests
+    /// `/tell` with the nickname, which reaches them. The real name stays in
+    /// the log, commands, selectors and the server's events. Kept until a
+    /// mod sets it again, they leave (the next time they join they are
+    /// shown under their own name) or the server stops. Plain text: the mod
+    /// checks it (`native_text_allowed`, its length, other players' names).
+    /// Only where no player's state is swapped in, as
+    /// `native_run_command`; false there and when they aren't on. API
     /// 62.
     pub(super) fn native_set_nickname(&mut self, uuid: u128, nickname: Option<&str>) -> bool {
         let Some(host) = &mut self.lan else {
@@ -574,6 +584,10 @@ impl Game<'_> {
             return false;
         }
         host.hub.set_nickname(uuid, nickname.map(str::to_owned));
+        match nickname {
+            Some(n) => self.nicknames.insert(uuid, n.to_owned()),
+            None => self.nicknames.remove(&uuid),
+        };
         true
     }
     /// Hides the entity `entity` (its network id: a mob's, a display's, a
@@ -646,7 +660,8 @@ impl Game<'_> {
     /// left; None shows their nickname or name again. Their team's prefix,
     /// suffix and colour still go around it, and hovering it gives the real
     /// name, which `/tell` is suggested with and which stays in the log,
-    /// commands and selectors. The Tab list keeps `native_set_list_name`'s
+    /// commands and selectors (a nickname hides it from the hover and the
+    /// suggestion). The Tab list keeps `native_set_list_name`'s
     /// or the nickname. Kept until a mod sets it again or the server stops,
     /// also if they leave and come back. Only where no player's state is
     /// swapped in, as `native_run_command`; false there and when they aren't
@@ -674,10 +689,10 @@ impl Game<'_> {
     /// the tag unless a list name or nickname covers it; their own client
     /// reads it from their next join. Everything else keeps the real name:
     /// chat, commands, selectors, the log, the server's events. Kept until a
-    /// mod sets it again or the server stops, also if they leave and come
-    /// back. Only where no player's state is swapped in, as
-    /// `native_run_command`; false there, when they aren't on and for a tag
-    /// that isn't one. API @API:set_name_tag@.
+    /// mod sets it again, the player leaves or the server stops. Only where
+    /// no player's state is swapped in, as `native_run_command`; false there,
+    /// when they aren't on and for a tag that isn't one. API
+    /// @API:set_name_tag@.
     pub(super) fn native_set_name_tag(&mut self, uuid: u128, tag: Option<&str>) -> bool {
         if tag.is_some_and(|t| {
             t.is_empty() || t.len() > 16 || !t.bytes().all(|b| b.is_ascii_graphic())
@@ -1900,6 +1915,32 @@ mod tests {
         assert!(inventory_add(&mut inv, &mut off, 0, 64, &mut apple));
         assert!(off.is_none(), "never into an empty off hand (getFreeSlot)");
         assert_eq!(apple.count, 3);
+    }
+
+    /// `player` is one online player; `players` is several, and a client completes `@a`, `@p`, `@r`
+    /// and `@s` for it.
+    #[test]
+    fn a_players_argument_takes_several_players_where_a_player_argument_takes_one() {
+        let (t, _, problems) = tree(&[NativeCommand::new(
+            "mark <one:player> <many:players> [more:players]",
+        )]);
+        assert!(problems.is_empty(), "{problems:?}");
+        let one = &t["children"]["mark"]["children"]["one"];
+        assert_eq!(one["parser"], "minecraft:entity");
+        assert_eq!(
+            one["properties"],
+            json!({"amount": "single", "type": "players"})
+        );
+        let many = &one["children"]["many"];
+        assert_eq!(many["parser"], "minecraft:entity");
+        assert_eq!(
+            many["properties"],
+            json!({"amount": "multiple", "type": "players"})
+        );
+        assert_eq!(many["executable"], true);
+        assert_eq!(many["children"]["more"]["executable"], true);
+        // An optional one is the same argument.
+        assert_eq!(many["children"]["more"]["properties"], many["properties"]);
     }
 
     #[test]

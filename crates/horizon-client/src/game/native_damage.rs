@@ -35,6 +35,14 @@ fn player_uuid(entity: i32) -> Option<u128> {
     PLAYERS.with(|players| players.borrow().get(&entity).copied())
 }
 
+/// The UUID of the player `hurting` names as hit, when one was noted.
+pub(super) fn victim_uuid(hurting: &Hurting<'_>) -> Option<u128> {
+    match hurting {
+        Hurting::Player(entity, _) => player_uuid(*entity),
+        _ => None,
+    }
+}
+
 /// The victim's UUID (a player's), the hit's attacker (the causing entity), its UUID and the
 /// direct entity, each none when not known.
 pub(super) struct Parties {

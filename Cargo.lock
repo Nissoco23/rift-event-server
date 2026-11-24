@@ -416,15 +416,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cargo-horizon-mod"
-version = "0.1.0"
-dependencies = [
- "horizon-mods",
- "serde_json",
- "zip",
-]
-
-[[package]]
 name = "cbc"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -975,6 +966,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b5343afd4a8365a643ac588dab4cf234a190c7f6c88c9f6dd6ffe00837661b7"
 
 [[package]]
+name = "essentials"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1283,6 +1282,16 @@ dependencies = [
  "crunchy",
  "num-traits",
  "zerocopy",
+]
+
+[[package]]
+name = "hardcore"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "serde",
+ "toml",
 ]
 
 [[package]]
@@ -1651,15 +1660,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-discord"
-version = "0.1.0"
-dependencies = [
- "horizon-platform",
- "log",
- "serde_json",
-]
-
-[[package]]
 name = "horizon-dualsense"
 version = "0.1.0"
 dependencies = [
@@ -1686,15 +1686,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-game"
-version = "0.1.0"
-dependencies = [
- "horizon-client",
- "horizon-mods",
- "horizon-threads",
-]
-
-[[package]]
 name = "horizon-hdr"
 version = "0.1.0"
 dependencies = [
@@ -1703,15 +1694,6 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wgpu",
-]
-
-[[package]]
-name = "horizon-heartbeat"
-version = "0.1.0"
-dependencies = [
- "horizon-platform",
- "horizon-telemetry",
- "log",
 ]
 
 [[package]]
@@ -1799,29 +1781,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-official"
-version = "0.1.0"
-dependencies = [
- "horizon-discord",
- "horizon-friends",
- "horizon-game",
- "horizon-heartbeat",
- "horizon-official-servers",
- "horizon-platform",
- "log",
- "winresource",
-]
-
-[[package]]
-name = "horizon-official-servers"
-version = "0.1.0"
-dependencies = [
- "horizon-addresses",
- "horizon-platform",
- "log",
-]
-
-[[package]]
 name = "horizon-optifine"
 version = "0.1.0"
 dependencies = [
@@ -1854,19 +1813,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "horizon-port-pack"
-version = "0.1.0"
-dependencies = [
- "horizon-mods",
- "serde",
- "serde_json",
- "sha1",
- "toml",
- "ureq",
- "zip",
-]
-
-[[package]]
 name = "horizon-prepare"
 version = "0.1.0"
 dependencies = [
@@ -1893,15 +1839,6 @@ dependencies = [
  "sha1",
  "sha2",
  "socket2 0.5.10",
-]
-
-[[package]]
-name = "horizon-relay"
-version = "0.1.0"
-dependencies = [
- "getrandom 0.3.4",
- "horizon-friends",
- "serde_json",
 ]
 
 [[package]]
@@ -1947,6 +1884,7 @@ name = "horizon-server-files"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "getrandom 0.3.4",
  "horizon-core",
  "horizon-protocol",
  "horizon-world",
@@ -2713,6 +2651,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "nick"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
@@ -3765,6 +3714,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
+name = "rift-chat"
+version = "0.1.0"
+dependencies = [
+ "horizon-client-core",
+]
+
+[[package]]
+name = "rift-engine"
+version = "0.1.0"
+dependencies = [
+ "essentials",
+ "hardcore",
+ "horizon-client",
+ "horizon-threads",
+ "nick",
+ "sculkstorm",
+ "throwingdiscs",
+ "viewdistance",
+ "voicechat",
+]
+
+[[package]]
 name = "ring"
 version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3981,6 +3952,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sculkstorm"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "log",
+ "rift-chat",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4167,17 +4149,6 @@ checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "socks"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f0c3dbbd9ae980613c6dd8e28a9407b50509d3803b57624d5dfe8315218cd58b"
-dependencies = [
- "byteorder",
- "libc",
- "winapi",
 ]
 
 [[package]]
@@ -4397,6 +4368,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "throwingdiscs"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]
@@ -4658,7 +4640,6 @@ dependencies = [
  "once_cell",
  "rustls",
  "rustls-pki-types",
- "socks",
  "url",
  "webpki-roots 0.26.11",
 ]
@@ -4708,6 +4689,27 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
+
+[[package]]
+name = "viewdistance"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "voicechat"
+version = "0.1.0"
+dependencies = [
+ "horizon-client",
+ "rift-chat",
+ "ring",
+ "serde",
+ "toml",
+]
 
 [[package]]
 name = "walkdir"

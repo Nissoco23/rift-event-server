@@ -676,7 +676,8 @@ runtime or new dependency. Server-sent events can replace the polling later if a
 - **Backups.** The supervisor runs `save-off`, then `save-all flush`, then zips the world plus the vanilla
   files and `server.toml` into `backups/<UTC time>-<name>.zip`, then runs `save-on`. Players stay online. Zip
   works for everyone, Windows included. It runs on the `every` schedule, on demand and before an
-  update. It keeps the last `keep` automatic backups and never deletes one made by hand. A backup is written
+  update. It keeps the last `keep` automatic backups and never deletes one made by hand (`auto` is the automatic
+  backups' own name: a hand backup cannot take it). A backup is written
   to a temporary name and renamed when complete, so a crash never leaves a half-written backup that looks
   finished. A stopped server is backed up straight from its files.
 - **Restore.** `restore NAME` takes a file name, a unique prefix, or the name given to `backup` (the newest
@@ -763,7 +764,7 @@ runtime or new dependency. Server-sent events can replace the polling later if a
   Discord bridges and scripts written for it. The supervisor serves it (`rcon.rs`, std only like `http.rs`), so it
   answers while the game restarts (a command then says the game isn't running), and it reads its settings as
   `RconThread.create` does: no password or a port outside 1 to 65535 leaves it off with vanilla's warning. The
-  packets are `RconClient`'s: login (3), command (2), the output in packets of 4096 characters, `-1` for a refused
+  packets are `RconClient`'s: login (3), command (2), the output in packets of 4096 UTF-16 units, `-1` for a refused
   login, `Unknown request <hex>` for another type, `Error executing: <command> (<reason>)` for a command that failed.
   A command goes to the game as an `rcon <line>` request on the control endpoint (`horizon-server cmd` sends
   `console <line>`, the same console under the `Server` source), so the

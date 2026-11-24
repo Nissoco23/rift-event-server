@@ -2,7 +2,7 @@
 //! `[panel] bind` (127.0.0.1:8130 by default; a tailnet address to reach it from the owner's devices). It
 //! uses the control API's routes with a browser session instead of the token.
 //!
-//! - **Login.** `horizon-server panel` asks the API for a link with a one-time code, good for 10 minutes;
+//! - **Login.** `rift-server panel` asks the API for a link with a one-time code, good for 10 minutes;
 //!   opening it swaps the code for an `HttpOnly; SameSite=Strict` session cookie. Anyone who can read the
 //!   server folder's token can make a link, and no one else can. Sessions end when the supervisor does.
 //! - **Rebinding and CSRF.** The `Host` header must name the panel's own address (`localhost` too on
@@ -100,22 +100,24 @@ impl Auth {
     fn redeem(&mut self, code: &str) -> Result<String, Response> {
         self.failures
             .retain(|at| at.elapsed() < Duration::from_secs(60));
-        if self.failures.len() >= FAILURES_PER_MINUTE {
-            return Err(page_error(
-                429,
-                "Too many failed logins: wait a minute, then open a new link.",
-            ));
-        }
         self.codes.retain(|(_, at)| at.elapsed() < LINK_LIFE);
         let Some(i) = self
             .codes
             .iter()
             .position(|(c, _)| api::same_token(c, code))
         else {
+            // Only wrong codes are slowed: a stranger's guesses must not lock the owner's real
+            // link out (a code is 256 random bits, so the limit only spares the log).
+            if self.failures.len() >= FAILURES_PER_MINUTE {
+                return Err(page_error(
+                    429,
+                    "Too many failed logins: wait a minute, then open a new link.",
+                ));
+            }
             self.failures.push_back(Instant::now());
             return Err(page_error(
                 403,
-                "This login link was used already or has expired. Run `horizon-server panel` for a new one.",
+                "This login link was used already or has expired. Run `rift-server panel` for a new one.",
             ));
         };
         self.codes.remove(i);
@@ -171,7 +173,7 @@ fn reachable(address: SocketAddr) -> SocketAddr {
 
 fn page_error(status: u16, message: &str) -> Response {
     let body = format!(
-        "<!doctype html><meta charset=utf-8><title>Horizon server</title>\
+        "<!doctype html><meta charset=utf-8><title>Rift server</title>\
          <link rel=stylesheet href=/panel.css><main class=message><p>{}</p></main>",
         message
             .replace('&', "&amp;")
@@ -275,11 +277,11 @@ fn handle(shared: &Arc<Shared>, address: SocketAddr, request: &Request) -> Respo
     if !shared.panel.lock().unwrap().signed_in(request) {
         return Response::error(
             401,
-            "sign in with a link from `horizon-server panel` on the server",
+            "sign in with a link from `rift-server panel` on the server",
         );
     }
     if path == "/api/v1/panel/login" {
-        return Response::error(403, "login links come from `horizon-server panel` only");
+        return Response::error(403, "login links come from `rift-server panel` only");
     }
     api::route(shared, request)
 }
@@ -298,6 +300,33 @@ pub fn start(shared: Arc<Shared>, address: SocketAddr) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    /// docs/server.md section 6: a login link's code is "good for 10 minutes", and wrong codes are counted
+    /// over a minute ("after 10 failed logins in a minute, logins are refused for a while").
+    #[test]
+    fn a_login_code_lasts_ten_minutes_and_failures_count_for_one() {
+        let ago = |seconds| {
+            Instant::now()
+                .checked_sub(Duration::from_secs(seconds))
+                .unwrap()
+        };
+        let status = |r: Result<String, Response>| r.map_err(|e| e.status);
+        let mut auth = Auth {
+            address: Some("127.0.0.1:8130".parse().unwrap()),
+            ..Auth::default()
+        };
+        // A code a second short of ten minutes old still signs in; one a second past does not.
+        auth.codes.push(("fresh".into(), ago(599)));
+        auth.codes.push(("stale".into(), ago(601)));
+        assert!(auth.redeem("fresh").is_ok());
+        assert_eq!(status(auth.redeem("stale")), Err(403));
+        // Ten failures in the last minute refuse the eleventh try with 429, even a wrong one...
+        auth.failures = (0..FAILURES_PER_MINUTE).map(|_| ago(59)).collect();
+        assert_eq!(status(auth.redeem("nope")), Err(429));
+        // ...and failures older than a minute no longer count.
+        auth.failures = (0..FAILURES_PER_MINUTE).map(|_| ago(61)).collect();
+        assert_eq!(status(auth.redeem("nope")), Err(403));
+    }
 
     #[test]
     fn hosts() {
@@ -435,6 +464,11 @@ mod tests {
         for _ in 1..FAILURES_PER_MINUTE {
             assert!(get("/login?code=nope", "").0.starts_with("HTTP/1.1 403"));
         }
+        assert!(get("/login?code=nope", "").0.starts_with("HTTP/1.1 429"));
+        // A real link still signs in while the wrong ones are refused.
+        let url = shared.panel.lock().unwrap().login_link().unwrap();
+        let path = url.split_once(&address.to_string()).unwrap().1.to_owned();
+        assert!(get(&path, "").0.starts_with("HTTP/1.1 303"));
         assert!(get("/login?code=nope", "").0.starts_with("HTTP/1.1 429"));
         std::fs::remove_dir_all(&dir).unwrap();
     }

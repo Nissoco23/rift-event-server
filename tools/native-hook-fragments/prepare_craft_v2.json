@@ -1,0 +1,24 @@
+{
+  "hooks": [
+    {
+      "name": "prepare_smithing_v2",
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_prepare_smithing_v2",
+      "neoforge": "none (NeoForge has no such event)",
+      "side": "server",
+      "mod_api": {
+        "contract": "listen"
+      }
+    },
+    {
+      "name": "prepare_item_craft_v2",
+      "target": "horizon_client::game::native_hooks::Game<'_>::native_prepare_item_craft_v2",
+      "neoforge": "none (NeoForge has no such event)",
+      "side": "server",
+      "mod_api": {
+        "contract": "listen"
+      }
+    }
+  ],
+  "rust_summary": "a smithing or crafting-grid result with its inputs, which a mod may replace or clear (`native_prepare_smithing_v2`, `native_prepare_item_craft_v2`).",
+  "doc_summary": "`native_prepare_smithing_v2(player, name, pos, template, base, addition, result)` and `native_prepare_item_craft_v2(player, name, pos, grid, result)` give a mod the inputs of a smithing table or crafting grid and the result, which a mod may replace or clear (`None`) even when vanilla made it; the earlier hooks hear only a table with no result. Bundles need \"hooks\": @API:prepare_craft_v2@."
+}

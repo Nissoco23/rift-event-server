@@ -596,18 +596,37 @@ impl Game<'_> {
         }
     }
 
-    /// `Player.dropEquipment` for the player who died: unless keep_inventory
-    /// is on, `destroyVanishingCursedItems`, then `Inventory.dropAll` from
+    /// `Player.dropEquipment` for the player who died: unless the inventory is
+    /// kept, `destroyVanishingCursedItems`, then `Inventory.dropAll` from
     /// `at` (the eyes less 0.3): slots 0..36, armor feet to head (36..39),
     /// the off hand (40), each thrown in a random direction. The mods
     /// (`native_loot_drops`, the dying player `who`: uuid and entity id)
     /// may add to, change or take out the stacks before they are thrown.
-    pub(super) fn drop_inventory(&mut self, at: [f64; 3], who: (u128, i32)) {
-        if self.ui.rules.bool("keep_inventory") {
+    /// `keep` and `drop` are keep_inventory's rule (keep, no drop; or no keep, drop) unless a
+    /// mod chose otherwise (`native_player_death_loot`): kept and dropped is a copy of what the
+    /// player holds (without what vanishes), thrown while they keep it; neither takes the
+    /// inventory away and throws nothing.
+    pub(super) fn drop_inventory(
+        &mut self,
+        at: [f64; 3],
+        who: (u128, i32),
+        keep: bool,
+        drop: bool,
+    ) {
+        let mut stacks = if keep {
+            if !drop {
+                return;
+            }
+            death_copies(&self.inventory, &self.offhand, &self.armor)
+        } else {
+            death_drops(&mut self.inventory, &mut self.offhand, &mut self.armor)
+        };
+        if !keep {
+            self.apply_equipment();
+        }
+        if !drop {
             return;
         }
-        let mut stacks = death_drops(&mut self.inventory, &mut self.offhand, &mut self.armor);
-        self.apply_equipment();
         let context = horizon_client::mod_api::NativeLootDrops {
             table: "",
             dimension: self.dim.id(),
@@ -755,6 +774,20 @@ impl Game<'_> {
             return;
         };
         self.player_drop(thrown);
+    }
+
+    /// `ServerPlayer.drop(boolean)` for the guest `conn` (`gi` in the hub): the
+    /// drop key's throw, then `setRemoteSlot` on the selected slot so a pickup
+    /// that refills the stack is sent to the client that predicted the drop.
+    pub(super) fn guest_drop_held(
+        &mut self,
+        host: &mut super::lan::LanHost,
+        gi: usize,
+        conn: u32,
+        all: bool,
+    ) {
+        self.as_guest(host, conn, |g| g.drop_held(all));
+        host.hub.guests[gi].told_selected();
     }
 
     /// `Player.createItemStackToDrop`: an item entity thrown from the eyes

@@ -5047,6 +5047,7 @@ mod tests {
                         "igloo",
                         "ruined_portal",
                         "mansion",
+                        "monument",
                     ][..],
                 ),
                 (
@@ -5077,9 +5078,26 @@ mod tests {
                     } else {
                         ChunkPos::new(i as i32 * 3, 0)
                     };
-                    originals.push(
+                    // A monument needs open ocean around it, which this small area may not
+                    // have: search a cell per spacing step. `structure_start` generates the
+                    // structure wherever its own checks pass, not only in the set's chunk.
+                    let search: Vec<ChunkPos> = if name == "minecraft:monument" {
+                        (0..1024)
+                            .map(|i| {
+                                ChunkPos::new(
+                                    pos.x + (i % 32 - 16) * 32,
+                                    pos.z + (i / 32 - 16) * 32,
+                                )
+                            })
+                            .collect()
+                    } else {
                         std::iter::once(pos)
                             .chain((1..64).map(|i| ChunkPos::new(pos.x + i % 8, pos.z + i / 8)))
+                            .collect()
+                    };
+                    originals.push(
+                        search
+                            .into_iter()
                             .find_map(|pos| worker.structure_start(&name, pos))
                             .unwrap_or_else(|| panic!("{seed} {name}")),
                     );
@@ -5100,6 +5118,7 @@ mod tests {
                                     | "minecraft:wmp"
                                     | "minecraft:nefos"
                                     | "minecraft:ecp"
+                                    | "minecraft:omb"
                             )
                     }) {
                         Arc::get_mut(original)

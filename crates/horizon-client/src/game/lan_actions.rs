@@ -47,13 +47,11 @@ mod crack_feedback_tests;
 /// Per-guest state of the gameplay code that lives outside `Guest`.
 #[derive(Default)]
 pub(super) struct GuestPlay {
-    /// The sign this guest may write on (`SignBlockEntity.playerWhoMayEdit`).
-    pub(super) sign_editing: Option<[i32; 3]>,
     mining: Option<Mining>,
     destroy_delay: u32,
     using: Option<(usize, u32)>,
     use_duration: i32,
-    use_ticks_set: bool,
+    use_start: super::using_item::UseStart,
     use_delay: u32,
     /// The shield's ItemCooldowns entry: an axe disabled it for this many ticks.
     pub(super) shield_cooldown: u32,
@@ -201,7 +199,7 @@ pub(super) struct GuestSwap {
     destroy_delay: u32,
     using: Option<(usize, u32)>,
     use_duration: i32,
-    use_ticks_set: bool,
+    use_start: super::using_item::UseStart,
     use_delay: u32,
     pub(super) shield_cooldown: u32,
     /// The guest's item cooldowns (`Game::cooldowns` for its turn).
@@ -650,7 +648,7 @@ impl Game<'_> {
         let destroy_delay = std::mem::replace(&mut self.destroy_delay, play.destroy_delay);
         let using = std::mem::replace(&mut self.using, play.using.take());
         let use_duration = std::mem::replace(&mut self.use_duration, play.use_duration);
-        let use_ticks_set = std::mem::replace(&mut self.use_ticks_set, play.use_ticks_set);
+        let use_start = std::mem::replace(&mut self.use_start, std::mem::take(&mut play.use_start));
         let use_delay = std::mem::replace(&mut self.use_delay, play.use_delay);
         let shield_cooldown = std::mem::replace(&mut self.shield_cooldown, play.shield_cooldown);
         let cooldowns = std::mem::replace(&mut self.cooldowns, std::mem::take(&mut play.cooldowns));
@@ -778,7 +776,7 @@ impl Game<'_> {
             destroy_delay,
             using,
             use_duration,
-            use_ticks_set,
+            use_start,
             use_delay,
             shield_cooldown,
             cooldowns,
@@ -880,7 +878,7 @@ impl Game<'_> {
             destroy_delay,
             using,
             use_duration,
-            use_ticks_set,
+            use_start,
             use_delay,
             shield_cooldown,
             cooldowns,
@@ -1039,7 +1037,7 @@ impl Game<'_> {
         play.destroy_delay = std::mem::replace(&mut self.destroy_delay, destroy_delay);
         play.using = std::mem::replace(&mut self.using, using);
         play.use_duration = std::mem::replace(&mut self.use_duration, use_duration);
-        play.use_ticks_set = std::mem::replace(&mut self.use_ticks_set, use_ticks_set);
+        play.use_start = std::mem::replace(&mut self.use_start, use_start);
         play.use_delay = std::mem::replace(&mut self.use_delay, use_delay);
         play.shield_cooldown = std::mem::replace(&mut self.shield_cooldown, shield_cooldown);
         play.cooldowns = std::mem::replace(&mut self.cooldowns, cooldowns);
@@ -1642,7 +1640,7 @@ impl Game<'_> {
                 );
                 return false;
             }
-            self.unpack_boat_loot(i);
+            self.unpack_boat_loot(i, true);
         }
         // `createMenu` (ChestMenu.threeRows or a HopperMenu), and
         // `MenuProvider.getDisplayName`, the vehicle's name key.
@@ -1672,10 +1670,7 @@ impl Game<'_> {
         true
     }
 
-    /// `ContainerEntity.unpackChestVehicleLootTable` for a chest boat: the table
-    /// its raw NBT still holds rolls into the slots on the first open (an empty
-    /// boat, as a command leaves one), and `player_generates_container_loot`
-    /// fires for the player who opened it.
+    /// Whether a spectator must be refused this boat's menu.
     fn boat_loot_pending(&self, id: u32) -> bool {
         matches!(
             self.persist.raw.get(&id),
@@ -1683,11 +1678,13 @@ impl Game<'_> {
         )
     }
 
-    fn unpack_boat_loot(&mut self, i: usize) {
+    /// `ContainerEntity.unpackChestVehicleLootTable`: slot access rolls once;
+    /// only a player opening the menu fires the criterion, before filling.
+    pub(super) fn unpack_boat_loot(&mut self, i: usize, player: bool) {
         use horizon_world::nbt::Tag;
         let id = self.boats[i].id;
         let (table, seed) = {
-            let Some(Tag::Compound(map)) = self.persist.raw.get_mut(&id) else {
+            let Some(Tag::Compound(map)) = self.persist.raw.get(&id) else {
                 return;
             };
             let Some(table) = crate::save::text(map.get(&"LootTable".into()))
@@ -1699,17 +1696,17 @@ impl Game<'_> {
                 Some(Tag::Long(seed)) => Some(*seed),
                 _ => None,
             };
-            // The table is spent even when nothing can be rolled into it (the
-            // loot data is not loaded): vanilla clears it before filling.
-            map.remove(&"LootTable".into());
-            map.remove(&"LootTableSeed".into());
             (table, seed)
         };
-        // `LootTable.fill` sets the slots it rolls and leaves the rest; a boat
-        // that already holds something keeps it, so no table is applied over it.
-        if self.boats[i].items.iter().any(Option::is_some) {
-            return;
+        if player {
+            self.trigger_loot_table(&table);
         }
+        if let Some(Tag::Compound(map)) = self.persist.raw.get_mut(&id) {
+            map.remove(&"LootTable".into());
+            map.remove(&"LootTableSeed".into());
+        }
+        let key = (i32::MAX - 15, super::minecarts::CART_KEY_Y, id as i32);
+        self.store_cart_items(key);
         let loot = crate::structure_blocks::loot_data(&self.options.resources, &self.pack_files());
         let b = &self.boats[i];
         let at = Vec3::new(b.position.x, b.position.y, b.position.z);
@@ -1722,12 +1719,16 @@ impl Game<'_> {
         crate::structure_blocks::roll_container(
             &mut self.boats[i].items,
             loot.as_deref(),
-            table.clone(),
+            table,
             seed,
             pos,
             &biome,
         );
-        self.trigger_loot_table(&table);
+        if let Some(horizon_client::containers::BlockEntity::Chest(items)) =
+            self.world.block_entities.get_mut(&key)
+        {
+            items.clone_from(&self.boats[i].items);
+        }
     }
 
     /// The guest's open container is closing (`AbstractContainerMenu.removed`):
@@ -2348,7 +2349,7 @@ impl Game<'_> {
                 }
                 4 | 5 => {
                     if !spectator {
-                        self.as_guest(host, conn, |g| g.drop_held(a.action == 4));
+                        self.guest_drop_held(host, gi, conn, a.action == 4);
                     }
                 }
                 // RELEASE_USE_ITEM: ServerPlayer.releaseUsingItem, with the
@@ -2377,7 +2378,7 @@ impl Game<'_> {
                                 {
                                     g.native_player_ready_arrow(uuid, &name, &arrow);
                                 }
-                                g.release_used_item(&stack, ticks, false);
+                                g.release_using_item(&stack, ticks);
                                 if listening {
                                     g.native_player_stop_using_item(uuid, &name);
                                 }
@@ -3513,13 +3514,7 @@ impl Game<'_> {
         if host.hub.guests[gi].spectator() {
             return;
         }
-        // handleAttack: a target inside the world border, then
-        // `isWithinAttackRange(mainHandItem, box, 3.0)` before anything else, players,
-        // mobs, objects and fireballs alike.
-        if let Some(target) = self.guest_target_box(host, gi, id)
-            && (!self.inside_border(&target)
-                || self.as_guest(host, conn, |g| g.within_attack_range(&target)) != Some(true))
-        {
+        if self.guest_attack_stops(host, gi, id) {
             return;
         }
         // Native mods, where Player.attack starts: a canceled blow does
@@ -3556,13 +3551,9 @@ impl Game<'_> {
                 && self.pvp_land(host, victim, &strike)
             {
                 let on_ground = Self::pvp_victim_on_ground(host, victim);
-                self.as_guest(host, conn, |g| {
-                    g.weapon_hit_player(on_ground);
-                    g.pvp_exhaustion();
-                    if strike.stops_sprint() {
-                        g.stop_sprint_after_extra_knockback();
-                    }
-                });
+                let stops_sprint = strike.stops_sprint();
+                let sent = self.as_guest(host, conn, |g| g.pvp_hit_after(on_ground, stops_sprint));
+                self.send_guest_motion(host, conn, sent.flatten());
             }
             return;
         }
@@ -3695,7 +3686,8 @@ impl Game<'_> {
         // ListPlayersCommand needs no permission and lists every player.
         let words: Vec<&str> = command.trim_start_matches('/').split(' ').collect();
         if words[0] == "list" && (words.len() == 1 || words[1..] == ["uuids"]) {
-            let content = host.hub.list_reply(words.len() == 2);
+            let operator = host.hub.guest(conn).is_some_and(|g| g.permission > 0);
+            let content = host.hub.list_reply(words.len() == 2, operator);
             host.hub.send_to(
                 conn,
                 &C::SystemChat(play::SystemChat {
@@ -4127,7 +4119,11 @@ impl Game<'_> {
             progress: g.xp_progress,
             total: g.xp_total,
         };
-        xp.respawn(self.ui.rules.bool("keep_inventory") || g.game_mode == SPECTATOR);
+        let keeps = g
+            .death_keeps_experience
+            .take()
+            .unwrap_or_else(|| self.ui.rules.bool("keep_inventory"));
+        xp.respawn(keeps || g.game_mode == SPECTATOR);
         (g.xp_level, g.xp_progress, g.xp_total) = (xp.level, xp.progress, xp.total);
         // PlayerEvent.Clone, at the end of `restoreFrom`: the data is copied,
         // the new player not yet placed.
@@ -4468,7 +4464,7 @@ impl Game<'_> {
 
     /// `ServerPlayer.die` for a guest whose health has run out: the death
     /// message, the loot and experience, the death screen.
-    fn guest_die(&mut self, host: &mut LanHost, gi: usize, conn: u32) {
+    pub(super) fn guest_die(&mut self, host: &mut LanHost, gi: usize, conn: u32) {
         if host.hub.guests[gi].health <= 0.0
             && !host.hub.guests[gi].dead
             && !horizon_client::mod_api::mods().is_empty()
@@ -4510,13 +4506,27 @@ impl Game<'_> {
             g.dead = true;
             g.last_death = Some((g.dimension.clone(), g.position.map(|v| v.floor() as i32)));
             let (id, at) = (g.entity_id, g.position);
+            let (name, uuid) = (g.name.clone(), g.uuid);
+            // What the death does to the inventory and the experience: keep_inventory's, unless a
+            // mod decides otherwise for this death.
+            let rule = self.ui.rules.bool("keep_inventory");
+            let (mut keep_inventory, mut drop_inventory) = (rule, !rule);
+            let (mut drop_experience, mut keep_experience) = (!rule, rule);
+            self.native_player_death_loot(
+                uuid,
+                &name,
+                &mut keep_inventory,
+                &mut drop_inventory,
+                &mut drop_experience,
+                &mut keep_experience,
+            );
+            g.death_keeps_experience = Some(keep_experience);
             let reward = Experience {
                 level: g.xp_level,
                 progress: g.xp_progress,
                 total: g.xp_total,
             }
-            .death_reward(self.ui.rules.bool("keep_inventory") || g.game_mode == SPECTATOR);
-            let (name, uuid) = (g.name.clone(), g.uuid);
+            .death_reward(!drop_experience || g.game_mode == SPECTATOR);
             // ServerPlayer.die: dropAllDeathLoot unless a spectator, from the eyes less 0.3.
             let drops = (g.game_mode != SPECTATOR)
                 .then(|| [at[0], at[1] + g.eye_height() - f64::from(0.3f32), at[2]]);
@@ -4547,7 +4557,7 @@ impl Game<'_> {
             let me = self.player_text(&name, uuid);
             let text = match cause {
                 Some(key) => horizon_client::text::Text::translate(&key, &[me]),
-                None if at[1] < f64::from(self.world.bottom_y() - 64) => {
+                None if at[1] < self.world.below_world_y() => {
                     horizon_client::text::Text::translate("death.attack.outOfWorld", &[me])
                 }
                 None => self.guest_death_message(conn, me),
@@ -4556,10 +4566,19 @@ impl Game<'_> {
             self.native_player_died_v2(uuid, &name, &text);
             let message = if self.ui.rules.bool("show_death_messages") {
                 let message = horizon_client::lan::data::component_nbt(&text.component());
+                // A mod may change what the others are told, and how near they must be.
+                let (mut line, mut radius) = (Some(text.clone()), None);
+                self.native_player_death_message(uuid, &name, &mut line, &mut radius);
+                let told =
+                    line.map(|line| horizon_client::lan::data::component_nbt(&line.component()));
+                let near = radius.map(|radius| host.hub.names_within(conn, radius));
                 let board = &self.score.board;
-                host.hub.system_message_to(message.clone(), |other| {
-                    horizon_client::scoreboard::death_message_reaches(board, &name, other)
-                });
+                if let Some(told) = told {
+                    host.hub.system_message_to(told, |other| {
+                        horizon_client::scoreboard::death_message_reaches(board, &name, other)
+                            && near.as_ref().is_none_or(|near| near.contains(other))
+                    });
+                }
                 if self.options.dedicated.is_some() {
                     super::dedicated::events::record(
                         "death",
@@ -4605,29 +4624,29 @@ impl Game<'_> {
             if consumed && catalyst_xp > 0 {
                 self.guest_catalyst_trigger(host, gi, conn, at, blow.clone());
             }
-            // ServerPlayer.die: the drops, then the deathCount objectives, then,
-            // with a kill credit, `killed_by` for the killer's type and the
-            // killer's awardKillScore, then the `deaths` statistic and the two
-            // timers it resets.
+            // ServerPlayer.die: the drops, the deathCount objectives, the
+            // experience (`dropAllDeathLoot`), then a kill credit's `killed_by`,
+            // awardKillScore and wither rose, then `deaths` and the two timers.
             self.as_guest(host, conn, |game| {
                 if let Some(eyes) = drops {
-                    game.drop_inventory(eyes, (uuid, id));
+                    game.drop_inventory(eyes, (uuid, id), keep_inventory, drop_inventory);
                 }
                 game.score_player_died();
                 if let Some(kind) = &killer {
                     game.award_stat("killed_by", kind, 1);
                 }
             });
+            // The experience the catalyst took does not drop (`Player.
+            // skipDropExperience`), and `dropAllDeathLoot` drops it before the rose.
+            if !consumed {
+                self.spawn_orbs(at, reward);
+            }
             self.guest_killed_player_trigger(host, conn, at, blow);
+            self.guest_award_kill_score(host, conn, at);
             self.as_guest(host, conn, |game| {
                 game.award_custom_stat("deaths", 1);
                 game.stats.reset_death_timers();
             });
-            // The experience the catalyst took does not drop (`Player.
-            // skipDropExperience`).
-            if !consumed {
-                self.spawn_orbs(at, reward);
-            }
         }
     }
 
@@ -5549,7 +5568,7 @@ impl Game<'_> {
         }
         if self.guest_can_glide(host, conn) != Some(true) {
             if let Some(g) = host.hub.guest_mut(conn) {
-                g.fall_flying = false;
+                g.end_glide();
             }
             return;
         }
@@ -6271,6 +6290,7 @@ fn eye_columns(at: [f64; 3], body: Dimensions) -> [std::ops::RangeInclusive<i32>
     [range(at[0]), range(at[2])]
 }
 
+mod attack_checks;
 mod dig_stop;
 use dig_stop::{StopDig, stop_dig};
 

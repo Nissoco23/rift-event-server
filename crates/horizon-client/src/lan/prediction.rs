@@ -72,6 +72,12 @@ const MOST_MET: f64 = 0.5;
 /// replay's velocity is still being brought to the client's.
 const AGREED: f64 = 1e-3;
 
+/// What a tick that lands `offset` blocks off the replay weighs: its offset in tolerances, at most
+/// [`MOST_WEIGHT`].
+fn weight(offset: f64, tolerance: f64) -> f32 {
+    (offset / tolerance).min(MOST_WEIGHT) as f32
+}
+
 /// Whether the block at `block` is near enough a player at `at` to change its next moves, `slack`
 /// blocks farther for a fast one (see [`slack`]).
 pub fn near(at: [f64; 3], block: [i32; 3], slack: f64) -> bool {
@@ -243,6 +249,23 @@ impl Replay {
         }
     }
 
+    /// A replay that goes on after the record lost what it hadn't played (a server that stalled for
+    /// seconds, more changes than it keeps, a tick that couldn't be played): it starts again at `at`,
+    /// the server's own position for the player, standing still, from the record's present. What the
+    /// client did in the gap is unknown, so the replay is excused ([`Replay::excuse`]) until its moves
+    /// agree with the client's again, at most [`DRIFT`] ticks of them off; after that a lie counts.
+    pub fn rebased(server: &PlayerMotion, at: [f64; 3], record: &Record) -> Self {
+        let restart = Restart {
+            at,
+            kept_motion: false,
+            ended: record.ended(),
+            changed: record.changes(),
+        };
+        let mut replay = Self::new(server, &restart);
+        replay.excuse();
+        replay
+    }
+
     /// Goes on from another teleport the client accepted: what the client keeps through it (its jump
     /// delay, a glide) stays as the replay had it; it stands still at the new place.
     pub fn restart(&mut self, restart: &Restart) {
@@ -258,7 +281,7 @@ impl Replay {
     /// Plays the record's ticks it hasn't, each after what the server had changed by then (the
     /// changes of the server ticks the client had seen when the tick ended), and returns those that
     /// landed farther than `tolerance`. None when the record no longer keeps them, or a tick couldn't
-    /// be played: the replay starts again at a teleport.
+    /// be played: the replay starts again ([`Replay::rebased`]).
     pub fn catch_up(
         &mut self,
         record: &Record,
@@ -365,7 +388,7 @@ impl Replay {
                     over.at_worst = self.ticks.back().copied();
                 }
                 over.worst = over.worst.max(offset);
-                over.weight += (offset / tolerance).min(MOST_WEIGHT) as f32;
+                over.weight += weight(offset, tolerance);
                 if steady == STEADY {
                     self.meet();
                 }
@@ -714,6 +737,9 @@ mod tests {
         /// Ticks `.0 .. .1` arrive together: the server plays them all at tick `.1`, in one
         /// catch-up, as it does when its tick lags the client's.
         burst: Option<(usize, usize)>,
+        /// Ticks `.0 .. .1` are never played, and the record keeps fewer than the gap: at tick `.1`
+        /// the replay can't catch up and starts again ([`Replay::rebased`]) where the client is.
+        gap: Option<(usize, usize)>,
         /// Blocks set in the scene after the floor.
         blocks: Vec<([i32; 3], &'static str)>,
         /// On tick `.0`, the server sends the player attributes (the server's body has no sprint
@@ -743,6 +769,7 @@ mod tests {
                 glider: false,
                 teleport: None,
                 burst: None,
+                gap: None,
                 blocks: Vec::new(),
                 attributes: None,
                 server_sprint: Vec::new(),
@@ -827,6 +854,7 @@ mod tests {
         let mut played = Vec::new();
         let run_teleport = run.teleport;
         let run_burst = run.burst;
+        let run_gap = run.gap;
         let run_attributes = run.attributes;
         let run_frozen = run.frozen;
         let run_item_use = run.item_use;
@@ -887,6 +915,9 @@ mod tests {
             if run_burst.is_some_and(|(from, to)| (from..to).contains(&i)) {
                 continue;
             }
+            if run_gap.is_some_and(|(from, to)| (from..to).contains(&i)) {
+                continue;
+            }
             let mut run = |body: &mut PlayerMotion, keys, sprinting| {
                 let mut result = Ok(());
                 world(body, &mut |w| result = w.replayed_tick(keys, sprinting));
@@ -901,6 +932,11 @@ mod tests {
                 let restart = record.take_restart().unwrap();
                 assert!(replay.finish(&record, &server, &restart, &mut run));
                 replay.restart(&restart);
+            }
+            if run_gap.is_some_and(|(_, to)| to == i) {
+                assert!(replay.catch_up(&record, &server, 0.03, &mut run).is_none());
+                replay = Replay::rebased(&server, [p.x, p.y, p.z], &record);
+                continue;
             }
             let over = replay.catch_up(&record, &server, 0.03, run).unwrap();
             if over.ticks > 0 && push.as_ref().is_some_and(|p| p.excused) {
@@ -1016,6 +1052,50 @@ mod tests {
             "{}",
             worst.describe()
         );
+    }
+
+    /// A tick weighs its offset in tolerances, and at most 5 however far it lands
+    /// (docs/anticheat.md): one blink can't kick on its own.
+    #[test]
+    fn a_tick_weighs_its_offset_in_tolerances_at_most_5() {
+        assert_eq!(weight(0.06, 0.03), 2.0);
+        assert_eq!(weight(0.1, 0.05), 2.0);
+        assert_eq!(weight(0.3, 0.03), 5.0);
+        assert_eq!(weight(100.0, 0.03), 5.0);
+    }
+
+    /// An excuse covers the ticks after it until the moves agree again, at most 40 of them (two
+    /// seconds, docs/anticheat.md): a client that never agrees again counts again from the 41st.
+    #[test]
+    fn an_excuse_lasts_40_ticks_at_most() {
+        let push = Push {
+            tick: 5,
+            velocity: [0.3, 0.0, 0.0],
+            heard: false,
+            excused: true,
+            taken: true,
+        };
+        // From the push on, a zigzag across that the replay never meets.
+        let zigzag = |i: usize, _: Vec3, honest: Vec3| {
+            let x = match i {
+                0..=5 => 0.0,
+                _ if i.is_multiple_of(2) => 0.2,
+                _ => -0.2,
+            };
+            honest.add_vector(Vec3::new(x, 0.0, 0.0))
+        };
+        let Some(steps) = steps(zigzag, Some(push)) else {
+            return;
+        };
+        let counted: Vec<usize> = steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.over.ticks > 0)
+            .map(|(i, _)| i)
+            .collect();
+        // The push's own tick counts and is excused; the 40 ticks after it don't count; the 41st
+        // does (the ones after it only every other tick: the replay tries the velocity it missed).
+        assert_eq!(counted.get(..2), Some(&[5, 46][..]), "{counted:?}");
     }
 
     #[test]
@@ -1213,6 +1293,37 @@ mod tests {
                 vec![25],
                 "{velocity:?}: {:?}",
                 steps.iter().map(|s| s.played.offset).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    /// The catch-up of [`a_missed_push_counts_once`] takes at most half a block a tick
+    /// ([`MOST_MET`]): a client that gives itself more on its own (a velocity cheat, a dash) still
+    /// counts on the ticks after, while the rest of its velocity dies out, not on its first tick
+    /// only.
+    #[test]
+    fn a_push_over_half_a_block_counts_until_it_dies_out() {
+        for velocity in [[1.0, 0.0, 0.0], [0.0, 0.0, -1.5]] {
+            let push = Push {
+                tick: 25,
+                velocity,
+                heard: false,
+                excused: false,
+                taken: true,
+            };
+            let Some(steps) = steps(|_, _, honest| honest, Some(push)) else {
+                return;
+            };
+            let counted: Vec<usize> = steps
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.over.ticks > 0)
+                .map(|(i, _)| i)
+                .collect();
+            // Measured: ticks 25 to 36 count at 1 block a tick, 25 to 37 at 1.5.
+            assert!(
+                counted.starts_with(&(25..=33).collect::<Vec<_>>()),
+                "{velocity:?}: {counted:?}"
             );
         }
     }
@@ -1428,6 +1539,54 @@ mod tests {
         let offsets: Vec<f64> = steps.iter().map(|s| s.played.offset).collect();
         assert!(offsets.iter().all(|&o| o <= EXACT), "{offsets:?}");
         assert!(steps.iter().all(|s| s.over == Over::default()));
+    }
+
+    /// A server that couldn't catch up (a stall longer than the record keeps) goes on from the
+    /// client's place, excused until the moves agree, instead of leaving the player unchecked.
+    /// `cheat_from`: the tick from which the client moves 0.3 blocks farther each tick.
+    fn after_a_gap(cheat_from: Option<usize>) -> Option<Vec<Step>> {
+        // 90 ticks walking +z from z 10.5 stay on the floor (z 10 to 40); ticks 3 to 43 are never
+        // played, and at tick 44 the record has 42 unplayed (it keeps 40): the rebase, which plays
+        // nothing.
+        let run = Run {
+            start: Vec3::new(15.5, 5.0, 10.5),
+            script: vec![(1, 0.0); 90],
+            gap: Some((3, 44)),
+            ..Run::walk()
+        };
+        steps_in(
+            run,
+            |i, _, honest| match cheat_from {
+                Some(from) if i >= from => Vec3::new(honest.x, honest.y, honest.z + 0.3),
+                _ => honest,
+            },
+            None,
+        )
+    }
+
+    /// Ticks the replay lost (a gap) are not accused of anything: the client is played again from
+    /// where the server has it, and nothing counts.
+    #[test]
+    fn an_honest_client_after_a_history_gap_is_never_over() {
+        let Some(steps) = after_a_gap(None) else {
+            return;
+        };
+        assert_eq!(steps.len(), 90 - 41 - 1);
+        assert!(steps.iter().all(|s| s.over == Over::default()));
+    }
+
+    /// The check resumes after the gap without a teleport: a client that starts lying once the
+    /// excuse has run out (at most [`DRIFT`] ticks after the rebase) is counted on its first
+    /// lying tick, and none before it is.
+    #[test]
+    fn a_cheat_after_a_history_gap_is_counted_again() {
+        // Tick 44 is the rebase: the 40 ticks after it spend the excuse, the cheat starts at tick 85.
+        let Some(steps) = after_a_gap(Some(85)) else {
+            return;
+        };
+        let first = steps.iter().position(|s| s.over.ticks > 0);
+        // Steps hold ticks 0 to 2, then 45 on.
+        assert_eq!(first, Some(85 - 42), "{:?}", steps[first.unwrap_or(0)].over);
     }
 
     /// A client walking 40 ticks towards +z, over the slab, into `blocks`, its moves passed through

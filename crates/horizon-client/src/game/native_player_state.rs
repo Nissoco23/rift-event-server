@@ -7,6 +7,7 @@
 //! `native_server_tick`, `native_menu_clicked`) everyone on.
 use super::{Game, commands::Target};
 use horizon_client::{brewing, effects::EffectInstance, entities::Experience, lan::playerdata};
+use horizon_core::geometry::Vec3;
 use horizon_world::{
     attribute_map::ValueKind,
     attributes::Operation,
@@ -124,6 +125,18 @@ fn set_persistent_data(saved: &mut Option<Tag>, data: Tag) -> bool {
     true
 }
 
+/// The fastest a mod may send a player on one axis, in blocks a tick: the speed a motion packet's
+/// velocity is cut to (a thrown falling block's, `native_falling.rs`, is cut the same).
+const VELOCITY_MAX: f64 = 3.9;
+
+/// `velocity` with each axis cut to `±VELOCITY_MAX`; None for a value that isn't finite.
+fn clamped_velocity(velocity: [f64; 3]) -> Option<Vec3> {
+    velocity.iter().all(|v| v.is_finite()).then(|| {
+        let [x, y, z] = velocity.map(|v| v.clamp(-VELOCITY_MAX, VELOCITY_MAX));
+        Vec3::new(x, y, z)
+    })
+}
+
 /// Where a player's state is while a helper reads it.
 #[derive(Clone, Copy)]
 enum Place {
@@ -208,6 +221,49 @@ impl Game<'_> {
                 self.for_player(Target::Guest(conn), f)
             }
         }
+    }
+
+    /// Gives the player `uuid` the velocity `velocity`, in blocks a tick, as Bukkit's `Player.setVelocity`
+    /// does (`Entity.setDeltaMovement`, then `hurtMarked`): the server's copy takes it and their client is
+    /// sent `ClientboundSetEntityMotionPacket`, which it takes as its own motion. The anticheat's replay
+    /// counts the packet as the server's push (`Guest::send`). Outside a player's turn it goes out at once,
+    /// as a push with no hurt does (`guest_hit_by`); inside their own turn the hub is out of reach, so it
+    /// goes with the tick's marked velocity (`guest_server_tick`), as a mace smash's does. Each axis is cut
+    /// to -3.9..=3.9, and an upward velocity lifts the player off the ground. False, and nothing sent, for
+    /// a value that is not finite, a player not reached (`native_place`), a dead one, and on a client. API
+    /// @API:set_player_velocity@.
+    pub(super) fn native_set_player_velocity(&mut self, uuid: u128, velocity: [f64; 3]) -> bool {
+        let Some(v) = clamped_velocity(velocity) else {
+            return false;
+        };
+        let (acting, conn) = match self.native_place(uuid) {
+            Some(Place::Acting) => (true, None),
+            Some(Place::Guest(i)) => match self.lan.as_ref() {
+                Some(host) => (false, Some(host.hub.guests[i].conn)),
+                None => return false,
+            },
+            None => return false,
+        };
+        let set = self.native_player_turn(uuid, |game| {
+            let Some(p) = game.player.as_mut() else {
+                return false;
+            };
+            p.velocity = v;
+            if v.y > 0.0 {
+                p.ground.on_ground = false;
+            }
+            if acting {
+                p.health.sync_velocity = true;
+            }
+            true
+        });
+        if set != Some(true) {
+            return false;
+        }
+        if let (Some(conn), Some(host)) = (conn, self.lan.as_ref()) {
+            self.send_guest_motion(host, conn, Some(v));
+        }
+        true
     }
 
     /// The player `uuid`'s food level (0 to 20), saturation and exhaustion,
@@ -577,6 +633,21 @@ mod tests {
             show_icon: false,
         };
         assert!(instance_v2(&bad).is_none());
+    }
+
+    #[test]
+    fn a_players_velocity_is_cut_to_the_packets_limit_and_must_be_a_number() {
+        assert_eq!(
+            clamped_velocity([0.35, 2.2, -0.35]),
+            Some(Vec3::new(0.35, 2.2, -0.35))
+        );
+        assert_eq!(
+            clamped_velocity([9.0, -9.0, 0.5]),
+            Some(Vec3::new(3.9, -3.9, 0.5))
+        );
+        assert_eq!(clamped_velocity([f64::NAN, 0.0, 0.0]), None);
+        assert_eq!(clamped_velocity([0.0, f64::INFINITY, 0.0]), None);
+        assert_eq!(clamped_velocity([0.0, 0.0, f64::NEG_INFINITY]), None);
     }
 
     #[test]

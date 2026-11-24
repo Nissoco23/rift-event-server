@@ -933,6 +933,14 @@ pub fn mob_to_nbt(
                 "MoreCarrotTicks".into(),
                 Tag::Int(m.extra.more_carrot_ticks),
             );
+            // A tamed rabbit (a Rift addition) keeps what a pet keeps; a wild one saves as vanilla's.
+            if let Some(owner) = m.extra.owner.filter(|_| m.extra.tame) {
+                map.insert("Owner".into(), Tag::IntArray(owner.to_vec()));
+                map.insert("Sitting".into(), Tag::Byte(i8::from(m.extra.sitting)));
+            } else {
+                map.remove(&"Owner".into());
+                map.remove(&"Sitting".into());
+            }
         }
         "minecraft:goat" => {
             map.insert(
@@ -2380,6 +2388,9 @@ pub fn mob_from_nbt_with_random(
     // `Rabbit.readAdditionalSaveData`.
     if m.species() == crate::mobs::Species::Rabbit {
         m.extra.more_carrot_ticks = number(tag.get("MoreCarrotTicks")).unwrap_or(0) as i32;
+        m.extra.owner = crate::save::uuid_from_tag(tag.get("Owner"));
+        m.extra.tame = m.extra.owner.is_some();
+        m.extra.sitting = m.extra.tame && flag(tag, "Sitting");
     }
     // `Ocelot.readAdditionalSaveData`.
     if m.species() == crate::mobs::Species::Ocelot {
@@ -6903,6 +6914,48 @@ mod sheep_nbt_tests {
         assert_eq!(number(tag.get("MoreCarrotTicks")), Some(33));
         let back = mob_from_nbt(&tag, &types, 2, None).unwrap();
         assert_eq!(back.extra.more_carrot_ticks, 33);
+    }
+
+    /// A tamed rabbit (a Rift addition) is saved with the `Owner` and `Sitting` a pet has, and a wild
+    /// one with neither, as in vanilla.
+    #[test]
+    fn a_tamed_rabbit_keeps_its_owner_and_whether_it_sits() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.local/horizon-client")
+            .join(horizon_core::VANILLA_VERSION);
+        if !root.join("items.json").exists() {
+            return;
+        }
+        let data = crate::mobs::MobTypes::load(&root).unwrap();
+        let types: HashMap<String, Arc<MobType>> = data
+            .types
+            .iter()
+            .map(|(k, v)| (k.clone(), Arc::new(v.clone())))
+            .collect();
+        let mut m = Mob::new(
+            1,
+            Arc::new(data.types["minecraft:rabbit"].clone()),
+            Vec3::new(0.0, 4.0, 0.0),
+            0.0,
+        );
+        let wild = mob_to_nbt(&m, [1, 2, 3, 4], None, None, |_| None);
+        assert!(wild.get("Owner").is_none() && wild.get("Sitting").is_none());
+        let back = mob_from_nbt(&wild, &types, 2, None).unwrap();
+        assert!(!back.extra.tame && back.extra.owner.is_none() && !back.extra.sitting);
+
+        m.extra.tame = true;
+        m.extra.owner = Some([7, 8, 9, 10]);
+        m.extra.sitting = true;
+        let tag = mob_to_nbt(&m, [1, 2, 3, 4], None, None, |_| None);
+        assert_eq!(
+            tag.get("Owner"),
+            Some(&Tag::IntArray(vec![7, 8, 9, 10])),
+            "vanilla's tag for a pet's owner"
+        );
+        assert_eq!(number(tag.get("Sitting")), Some(1));
+        let back = mob_from_nbt(&tag, &types, 2, None).unwrap();
+        assert!(back.extra.tame && back.extra.sitting);
+        assert_eq!(back.extra.owner, Some([7, 8, 9, 10]));
     }
 
     /// `Ocelot.addAdditionalSaveData` and `readAdditionalSaveData`: `Trusting`.

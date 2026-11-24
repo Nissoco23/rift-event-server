@@ -82,7 +82,7 @@
     "status": 400,
     "content_type": "application/json",
     "headers": [],
-    "body": {"error": "server.unknown is not a setting (`horizon-server config` lists them)"}
+    "body": {"error": "server.unknown is not a setting (`rift-server config` lists them)"}
   },
   "patch_stopped": {
     "status": 200,

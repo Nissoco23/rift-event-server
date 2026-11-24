@@ -2529,7 +2529,7 @@ impl Game<'_> {
         let Some(entity) = self.world.block_entities.get(&key) else {
             return;
         };
-        if entity.id() != name || fields.is_empty() {
+        if entity.id() != name || fields.is_empty() && !matches!(entity, BlockEntity::Conduit(_)) {
             return;
         }
         let mut full = fields.clone();
@@ -4064,7 +4064,7 @@ impl Game<'_> {
                                     && let Some(stack) = self.stack_in(slot).cloned()
                                 {
                                     self.use_duration = self.use_duration(&stack);
-                                    self.use_ticks_set = false;
+                                    self.use_start = super::using_item::UseStart::of(stack);
                                 }
                             }
                             _ => {}

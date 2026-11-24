@@ -122,7 +122,8 @@ pub struct Guest {
     /// The chunk radius this client is sent.
     pub view_distance: i32,
     /// A native mod's limit on `view_distance` for this player alone
-    /// (`native_set_player_view_distance`); None: the server's.
+    /// (`native_set_player_view_distance`); None: the server's. It also sets how far the server
+    /// keeps this player's chunks loaded and simulated (under the server's view distance).
     pub view_limit: Option<i32>,
     /// A fake player (a mod's bot with no client; `native_set_player_fake`): it keeps only a small
     /// area loaded and ticking around it and does not count for natural spawning, so hundreds of
@@ -253,6 +254,8 @@ pub struct Guest {
     pub chunk_queue: Vec<(i32, i32)>,
     /// The far ring's chunks still to send, past the view distance (`lan::far`), closest first.
     pub far_queue: Vec<(i32, i32)>,
+    /// Where the bounded far-ring scan resumes; reset when the view changes.
+    pub far_cursor: usize,
     /// PlayerChunkSender: batches sent but not yet acknowledged, how many
     /// may be (1 until the client's first acknowledgement, then 10), the
     /// rate the client asks for and the chunks the next batch may hold.
@@ -333,13 +336,23 @@ pub struct Guest {
     /// The shared flags (Entity.DATA_SHARED_FLAGS_ID) the player's client was
     /// last sent about itself.
     pub sent_shared: i8,
+    /// `updateFallFlying` ended the glide this tick. Vanilla's ServerPlayer.doTick ends it after the level tick's
+    /// ServerEntity.sendChanges, so the cleared flag reaches the client with the next tick's data: a landing glide
+    /// lasts one more tick on its ground, and a jump then keeps the speed (the elytra hop).
+    pub glide_end_unsent: bool,
     /// Pose last delivered to this player's own entity data, initially Standing.
     pub sent_pose: Pose,
     /// The shoulder parrots (Player.DATA_SHOULDER_PARROT_LEFT and _RIGHT) the
     /// player's client was last sent about itself.
     pub sent_shoulders: [Option<i32>; 2],
+    /// The skin layers (Avatar.DATA_PLAYER_MODE_CUSTOMISATION) the player's client was last sent
+    /// about itself; the default, none shown, until they are.
+    pub sent_skin: u8,
     /// Where the player last died (Player.lastDeathLocation), sent with the respawn.
     pub last_death: Option<(String, [i32; 3])>,
+    /// Whether the death that is being respawned from keeps the experience (a native mod may
+    /// decide it per death, `native_player_death_loot`); none: the keep_inventory rule does.
+    pub death_keeps_experience: Option<bool>,
     /// The last action sequence to acknowledge at the next tick (-1: none).
     pub ack_up_to: std::cell::Cell<i32>,
     pub sent_selected: usize,
@@ -528,6 +541,7 @@ impl Guest {
             far_sent_chunks: Default::default(),
             chunk_queue: Vec::new(),
             far_queue: Vec::new(),
+            far_cursor: 0,
             unacknowledged: 0,
             max_unacknowledged: 1,
             chunks_per_tick: 9.0,
@@ -566,9 +580,12 @@ impl Guest {
             sent_air: (300, 0.0),
             sent_frozen: 0,
             sent_shared: 0,
+            glide_end_unsent: false,
             sent_pose: Pose::Standing,
             sent_shoulders: [None; 2],
+            sent_skin: 0,
             last_death: None,
+            death_keeps_experience: None,
             ack_up_to: std::cell::Cell::new(-1),
             sent_selected: 0,
             inbox: VecDeque::new(),
@@ -766,6 +783,22 @@ impl Guest {
         }
         f
     }
+    /// `updateFallFlying` ends the glide (`glide_end_unsent`: its end reaches the client a tick later).
+    pub fn end_glide(&mut self) {
+        self.fall_flying = false;
+        self.glide_end_unsent = true;
+    }
+    /// The pose this player's own data tells its client, where this sender owns it (standing,
+    /// crouching, gliding): a glide's pose goes too (vanilla's updatePlayerPose), and one ended this
+    /// tick still shows until the next tick's data, which this takes (`glide_end_unsent`).
+    pub fn own_pose(&mut self) -> Option<Pose> {
+        let pose = if std::mem::take(&mut self.glide_end_unsent) {
+            Pose::FallFlying
+        } else {
+            self.pose()
+        };
+        matches!(pose, Pose::Standing | Pose::Crouching | Pose::FallFlying).then_some(pose)
+    }
     /// `Player.getDesiredPose`: sleeping, gliding, then the body's own pose
     /// (swimming, crawling, crouching) once its server tick has run.
     pub fn pose(&self) -> Pose {
@@ -880,6 +913,22 @@ impl Guest {
     pub fn inventory_told(&mut self) {
         for slot in 9..45 {
             self.menu_sent[slot] = self.menu_slot(slot);
+        }
+    }
+    /// `ServerPlayer.drop(boolean)`: `setRemoteSlot` on the selected hotbar
+    /// slot of the open menu (the inventory menu without one) records what the
+    /// dropping client already predicted, so the next broadcast sends the slot
+    /// again once it changes back (a pickup refilling the stack).
+    pub fn told_selected(&mut self) {
+        let slot = 36 + self.selected;
+        self.menu_sent[slot] = self.menu_slot(slot);
+        let told = self.inventory.get(self.selected).cloned().flatten();
+        if let Some(m) = self.menu.as_mut() {
+            let at = m.size + 27 + self.selected;
+            if m.sent.len() <= at {
+                m.sent.resize(at + 1, None);
+            }
+            m.sent[at] = told;
         }
     }
     pub fn set_menu_slot(&mut self, slot: usize, item: Option<ItemStack>) {
@@ -1034,9 +1083,131 @@ fn builtin_component(
                 write_block_predicate(predicate, ids, &mut w)?;
             }
         }
+        "minecraft:tool" => write_tool(value, ids, &mut w)?,
+        "minecraft:attribute_modifiers" => write_attribute_modifiers(value, ids, &mut w)?,
         _ => return None,
     }
     Some(horizon_protocol::item::Component::Raw(w.data))
+}
+
+/// `Tool.STREAM_CODEC` from `Tool.CODEC`'s saved form: the rules (blocks, an
+/// optional speed and an optional `correct_for_drops`), then the default
+/// mining speed, the wear per block and `can_destroy_blocks_in_creative`,
+/// each at its codec default when the stack leaves it out.
+fn write_tool(
+    value: &horizon_world::nbt::Tag,
+    ids: &dyn Fn(&str, &str) -> Option<i32>,
+    w: &mut horizon_protocol::buf::Writer,
+) -> Option<()> {
+    use horizon_world::datafix::dynamic::{as_bool_opt, as_number};
+    use horizon_world::nbt::Tag;
+    let Tag::List(rules) = value.get("rules")? else {
+        return None;
+    };
+    w.varint(i32::try_from(rules.len()).ok()?);
+    for rule in rules.as_slice() {
+        write_holder_set("minecraft:block", rule.get("blocks")?, ids, w)?;
+        match rule.get("speed") {
+            Some(speed) => {
+                w.bool(true);
+                w.f32(as_number(speed)?.float_value());
+            }
+            None => w.bool(false),
+        }
+        match rule.get("correct_for_drops") {
+            Some(correct) => {
+                w.bool(true);
+                w.bool(as_bool_opt(Some(correct))?);
+            }
+            None => w.bool(false),
+        }
+    }
+    let number = |key: &str| value.get(key).map(as_number);
+    w.f32(match number("default_mining_speed") {
+        Some(speed) => speed?.float_value(),
+        None => 1.0,
+    });
+    // ExtraCodecs.NON_NEGATIVE_INT.
+    let wear = match number("damage_per_block") {
+        Some(wear) => wear?.int_value(),
+        None => 1,
+    };
+    w.varint((wear >= 0).then_some(wear)?);
+    w.bool(match value.get("can_destroy_blocks_in_creative") {
+        Some(can) => as_bool_opt(Some(can))?,
+        None => true,
+    });
+    Some(())
+}
+
+/// `ItemAttributeModifiers.STREAM_CODEC` from its saved list: each entry's
+/// attribute (`ByteBufCodecs.holderRegistry`, its id), modifier id, amount
+/// and operation, slot group (`any` when left out) and display (`default`).
+fn write_attribute_modifiers(
+    value: &horizon_world::nbt::Tag,
+    ids: &dyn Fn(&str, &str) -> Option<i32>,
+    w: &mut horizon_protocol::buf::Writer,
+) -> Option<()> {
+    use horizon_world::datafix::dynamic::{as_number, namespaced};
+    use horizon_world::nbt::Tag;
+    let Tag::List(entries) = value else {
+        return None;
+    };
+    let string = |tag: Option<&Tag>| match tag {
+        Some(Tag::String(s)) => s.to_string().ok(),
+        _ => None,
+    };
+    w.varint(i32::try_from(entries.len()).ok()?);
+    for entry in entries.as_slice() {
+        let attribute = ids(
+            "minecraft:attribute",
+            &namespaced(&string(entry.get("type"))?),
+        )?;
+        w.varint((attribute >= 0).then_some(attribute)?);
+        w.string(&namespaced(&string(entry.get("id"))?));
+        w.f64(as_number(entry.get("amount")?)?.double_value());
+        // AttributeModifier.Operation ids.
+        w.varint(match string(entry.get("operation"))?.as_str() {
+            "add_value" => 0,
+            "add_multiplied_base" => 1,
+            "add_multiplied_total" => 2,
+            _ => return None,
+        });
+        // EquipmentSlotGroup ids.
+        let slot = match entry.get("slot") {
+            Some(slot) => string(Some(slot))?,
+            None => "any".to_owned(),
+        };
+        w.varint(match slot.as_str() {
+            "any" => 0,
+            "mainhand" => 1,
+            "offhand" => 2,
+            "hand" => 3,
+            "feet" => 4,
+            "legs" => 5,
+            "chest" => 6,
+            "head" => 7,
+            "armor" => 8,
+            "body" => 9,
+            "saddle" => 10,
+            _ => return None,
+        });
+        // ItemAttributeModifiers.Display.Type ids; an override carries its text.
+        match entry.get("display") {
+            None => w.varint(0),
+            Some(display) => match string(display.get("type"))?.as_str() {
+                "default" => w.varint(0),
+                "hidden" => w.varint(1),
+                "override" => {
+                    let text = display.get("value")?;
+                    w.varint(2);
+                    w.bytes(&horizon_world::nbt::write_network(text, Default::default()).ok()?);
+                }
+                _ => return None,
+            },
+        }
+    }
+    Some(())
 }
 
 /// `ByteBufCodecs.holderSet`: tags or direct registry entries, without item-id remapping.
@@ -1366,6 +1537,13 @@ fn network_stack(
             (
                 "minecraft:can_break",
                 horizon_protocol::item::component::CAN_BREAK,
+            ),
+            // The client predicts mining with the stack's own tool and shows
+            // the stack's own attribute modifiers (#14641).
+            ("minecraft:tool", horizon_protocol::item::component::TOOL),
+            (
+                "minecraft:attribute_modifiers",
+                horizon_protocol::item::component::ATTRIBUTE_MODIFIERS,
             ),
         ] {
             if d.other(&format!("!{name}")).is_some() {
@@ -2278,5 +2456,39 @@ mod tests {
                 &format!("scale {scale}"),
             );
         }
+    }
+
+    #[test]
+    fn told_selected_records_the_predicted_drop() {
+        use crate::lan::PlayerSender;
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicI32;
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let mut guest = Guest::new(
+            Joined {
+                conn: 2,
+                uuid: 2,
+                name: "Dropper".into(),
+                properties: Vec::new(),
+                info: horizon_protocol::packets::configuration::ClientInformation::new(2),
+                brand: "test".into(),
+                sender: PlayerSender::new(tx, Arc::default()),
+                latency: Arc::new(AtomicI32::new(0)),
+                address: "127.0.0.1:25565".parse().unwrap(),
+                expected: false,
+                configured: Default::default(),
+            },
+            2,
+            [0.5, 64.0, 0.5],
+            0,
+        );
+        guest.selected = 3;
+        guest.inventory[3] = Some(ItemStack::new("minecraft:netherrack", 63));
+        guest.told_selected();
+        // Dropping one is already known to the client (63); the pickup that
+        // refills the slot must then differ from `menu_sent` and be sent.
+        assert_eq!(guest.menu_sent[39].as_ref().map(|s| s.count), Some(63));
+        guest.inventory[3].as_mut().unwrap().count = 64;
+        assert_ne!(guest.menu_sent[39], guest.menu_slot(39));
     }
 }

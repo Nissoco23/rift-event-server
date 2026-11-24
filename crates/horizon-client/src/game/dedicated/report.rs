@@ -92,7 +92,7 @@ impl Recording {
     /// `horizon-report status`: how far the recording is.
     pub(super) fn status(&self) -> String {
         format!(
-            "Recording a performance report: {} of {} s, {} ticks (horizon-report stop writes it now)",
+            "Recording a performance report: {} of {} s, {} ticks (rift-report stop writes it now)",
             self.started.elapsed().as_secs(),
             self.seconds,
             self.ticks.len()

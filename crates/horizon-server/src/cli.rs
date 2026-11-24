@@ -78,8 +78,8 @@ pub fn start(dir: &Path) -> Result<(), String> {
             && status["phase"] == "running"
         {
             println!(
-                "\nThe server is running (pid {}). `horizon-server status` shows how it does, \
-                 `horizon-server stop` stops it.",
+                "\nThe server is running (pid {}). `rift-server status` shows how it does, \
+                 `rift-server stop` stops it.",
                 child.id()
             );
             return Ok(());
@@ -134,7 +134,7 @@ fn wait_running(client: &Client, replaced: Option<u64>) -> Result<(), String> {
         }
         if Instant::now() > deadline {
             return Err(format!(
-                "the game isn't up after {} s; `horizon-server logs` shows why",
+                "the game isn't up after {} s; `rift-server logs` shows why",
                 START_TIMEOUT.as_secs()
             ));
         }
@@ -149,7 +149,7 @@ fn wait_running(client: &Client, replaced: Option<u64>) -> Result<(), String> {
 /// `cmd`: one console command, and what it printed.
 pub fn command(dir: &Path, words: &[String]) -> Result<(), String> {
     if words.is_empty() {
-        return Err("cmd needs a console command, for example: horizon-server cmd list".into());
+        return Err("cmd needs a console command, for example: rift-server cmd list".into());
     }
     let client = running(dir)?;
     // A game that is starting or restarting takes the command once it is up.
@@ -302,7 +302,7 @@ pub fn report(dir: &Path, words: &[String]) -> Result<(), String> {
     let reply = client.call(
         "POST",
         "/api/v1/command",
-        Some(&json!({ "line": format!("horizon-report {seconds}") })),
+        Some(&json!({ "line": format!("rift-report {seconds}") })),
     )?;
     for line in reply["output"].as_array().into_iter().flatten() {
         println!("{}", line.as_str().unwrap_or_default());
@@ -324,7 +324,7 @@ pub fn report(dir: &Path, words: &[String]) -> Result<(), String> {
         }
     }
     Err(format!(
-        "no report in {} after {} s: is the game on a release with `horizon-report`?",
+        "no report in {} after {} s: is the game on a release with `rift-report`?",
         reports.display(),
         seconds + 60
     ))
@@ -444,7 +444,7 @@ fn describe(status: &Value) -> String {
         out += &format!("Updating: {busy}\n");
     } else if let Some(tag) = update["available"].as_str() {
         out += &format!(
-            "Horizon {tag} is out (this server runs {}): `horizon-server update` installs it\n",
+            "Rift Event Server {tag} is out (this server runs {}): `rift-server update` installs it\n",
             update["installed"].as_str().unwrap_or("?")
         );
     }
@@ -510,7 +510,7 @@ pub fn backups(dir: &Path, as_json: bool) -> Result<(), String> {
         return Ok(());
     }
     if all.is_empty() {
-        println!("No backups yet: `horizon-server backup` makes one.");
+        println!("No backups yet: `rift-server backup` makes one.");
     }
     for b in all {
         println!("{:>10}  {}", size(b.bytes), b.name);
@@ -564,7 +564,7 @@ pub fn restore(dir: &Path, name: &str, dimension: Option<&str>, yes: bool) -> Re
         print!("Restoring {name}: restarting the game with it");
         wait_running(&client, before)?;
         println!(
-            "\nThe game is running on the restored world; `horizon-server logs` has the details."
+            "\nThe game is running on the restored world; `rift-server logs` has the details."
         );
         return Ok(());
     }
@@ -662,7 +662,7 @@ mod tests {
                 "phase": "running",
                 "update": { "installed": "v2026.10.18", "available": "v2026.10.19" }
             })),
-            "Running\nHorizon v2026.10.19 is out (this server runs v2026.10.18): `horizon-server update` installs it\n"
+            "Running\nRift Event Server v2026.10.19 is out (this server runs v2026.10.18): `rift-server update` installs it\n"
         );
         assert_eq!(
             describe(

@@ -2573,7 +2573,8 @@ impl Game<'_> {
                 // above use their movement's flyDist/nextFlap threshold.
                 MobEvent::GameEvent { .. } => {}
                 MobEvent::AttackPlayer(amount, from) => {
-                    self.mob_hits_player(amount, from, "minecraft:mob_attack");
+                    self.combat.hit_landed =
+                        self.mob_hits_player(amount, from, "minecraft:mob_attack");
                 }
                 // doHurtTarget: the effect only when hurtServer took damage.
                 // Bee.doHurtTarget: a sting that hurt leaves the stinger in the
@@ -2597,7 +2598,9 @@ impl Game<'_> {
                     ticks,
                     amplifier,
                 } => {
-                    if self.mob_hits_player(amount, from, "minecraft:mob_attack") {
+                    self.combat.hit_landed =
+                        self.mob_hits_player(amount, from, "minecraft:mob_attack");
+                    if self.combat.hit_landed {
                         self.give_player_effect(effect, ticks, amplifier);
                     }
                 }
@@ -2797,7 +2800,7 @@ impl Game<'_> {
                     amount,
                     source,
                 } => {
-                    self.mob_attacks_mob(target, amount, source);
+                    self.combat.hit_landed = self.mob_attacks_mob(target, amount, source);
                 }
                 MobEvent::DamageMob {
                     target,
@@ -2817,7 +2820,8 @@ impl Game<'_> {
                     // CaveSpider, Husk and WitherSkeleton.doHurtTarget: the
                     // effect sits inside the branch where the hit landed, and
                     // `LivingEntity.addEffect` takes a mob as well as a player.
-                    if self.mob_attacks_mob(target, amount, source)
+                    self.combat.hit_landed = self.mob_attacks_mob(target, amount, source);
+                    if self.combat.hit_landed
                         && let Some(t) = self.mobs.iter_mut().find(|m| m.id == target)
                     {
                         t.add_effect(effect, ticks, amplifier);
@@ -3490,20 +3494,11 @@ impl Game<'_> {
                         t.add_effect(effect, ticks, amplifier);
                     }
                 }
-                MobEvent::Ignite { target, seconds } => match target {
-                    Who::Player => {
-                        if !self.creative
-                            && let Some(p) = self.player.as_mut()
-                        {
-                            p.ignite_for_ticks(seconds * 20)?;
-                        }
-                    }
-                    Who::Mob(id) => {
-                        if let Some(m) = self.mobs.iter_mut().find(|m| m.id == id) {
-                            m.ignite_for_ticks(seconds * 20);
-                        }
-                    }
-                },
+                MobEvent::Ignite(target, seconds) => self.ignite_entity(target, seconds)?,
+                MobEvent::ZombieIgnite(target, seconds) if self.combat.hit_landed => {
+                    self.ignite_entity(target, seconds)?
+                }
+                MobEvent::ZombieIgnite(..) => {}
                 MobEvent::Breed {
                     parent,
                     partner,
@@ -4073,6 +4068,12 @@ impl Game<'_> {
                 child.persistent = true;
                 self.breeding_orb(parent, [p.position.x, p.position.y, p.position.z]);
                 return;
+            }
+            // A tamed rabbit's baby (a Rift addition) is tamed too, its owner the parent's.
+            if p.species() == Species::Rabbit && p.extra.tame {
+                child.extra.tame = true;
+                child.extra.owner = p.extra.owner;
+                child.persistent = true;
             }
             // Nautilus.getBreedOffspring: a tame parent's baby is tame too.
             if p.species() == Species::Nautilus && p.extra.tame {
@@ -5567,10 +5568,7 @@ impl Game<'_> {
                 let mut dodged = false;
                 // AbstractArrow.onHitEntity: a burning arrow sets its target alight.
                 if p.arrow.as_ref().is_some_and(|a| a.on_fire()) {
-                    self.handle_mob_events(vec![MobEvent::Ignite {
-                        target: who,
-                        seconds: 5,
-                    }])?;
+                    self.handle_mob_events(vec![MobEvent::Ignite(who, 5)])?;
                 }
                 let hurt = match who {
                     Who::Player => {
@@ -6617,6 +6615,8 @@ impl Game<'_> {
         let mut shear_puff: Option<([f64; 3], f64)> = None;
         // `Ocelot.mobInteract`: whether the fish won its trust.
         let mut ocelot_trust: Option<bool> = None;
+        // A rabbit's taming try (a Rift addition): whether the carrot won it over.
+        let mut rabbit_taming: Option<bool> = None;
         match species {
             Species::Cow | Species::Mooshroom if item == "minecraft:bucket" && !m.is_baby() => {
                 give = Some("minecraft:milk_bucket");
@@ -7011,6 +7011,55 @@ impl Game<'_> {
                     self.trigger_entity("minecraft:tame_animal", "entity", &view);
                 }
             }
+            // Rabbits can be tamed in Rift, as wolves are (vanilla's are not tamable): a carrot
+            // wins a wild one over a third of the time, and then it follows its owner.
+            Species::Rabbit if !m.extra.tame && &*item == "minecraft:carrot" => {
+                consume = true;
+                eat = eating_sound(m, &mut self.world.random);
+                let tamed = m.random.next_int_bound(3).unwrap_or(1) == 0;
+                if tamed {
+                    m.extra.tame = true;
+                    m.extra.owner = Some(acting);
+                    m.persistent = true;
+                    m.nav_stop();
+                    m.ai.target = None;
+                }
+                rabbit_taming = Some(tamed);
+            }
+            // A tamed rabbit's food heals it, as a cat's does (`TamableAnimal.feed`), until it is
+            // whole; then `Animal.mobInteract` breeds it, except with a plain carrot, which only
+            // heals (golden carrots and dandelions breed a tamed rabbit).
+            Species::Rabbit if m.extra.tame && is_food && m.health < m.attrs.max_health => {
+                let heal = self
+                    .res
+                    .items()
+                    .get(&item)
+                    .and_then(|i| i.food.as_ref())
+                    .map_or(1.0, |f| f.0 as f32);
+                m.heal(heal);
+                consume = true;
+                eat = eating_sound(m, &mut self.world.random);
+            }
+            // The owner makes a tamed rabbit sit or stand, as a cat's owner does, unless the
+            // click is feeding it for breeding. A carrot is no breeding food for a tamed rabbit.
+            Species::Rabbit
+                if m.extra.tame
+                    && m.extra.owner == Some(acting)
+                    && !(is_food && &*item != "minecraft:carrot" && takes_food(m)) =>
+            {
+                m.extra.sitting = !m.extra.sitting;
+                m.ai.jumping = false;
+                m.nav_stop();
+                self.world.modified.insert((
+                    m.position.x.floor() as i32 >> 4,
+                    m.position.z.floor() as i32 >> 4,
+                ));
+            }
+            // Nobody but the owner makes a tamed rabbit sit, and a plain carrot never breeds it:
+            // the click is taken and does nothing.
+            Species::Rabbit if m.extra.tame && &*item == "minecraft:carrot" => {
+                return Ok(true);
+            }
             // Dolphin.mobInteract: a fish makes a baby grow by a tenth and an
             // adult remember it (`gotFish`), to swim to a treasure.
             Species::Dolphin if fish => {
@@ -7124,6 +7173,37 @@ impl Game<'_> {
         if let Some(trusts) = ocelot_trust {
             // `spawnTrustingParticles` on the clients: entity event 41 (hearts) or 40 (smoke).
             self.mob_event_particles(self.mobs[index].id, if trusts { 41 } else { 40 });
+        }
+        if let Some(tamed) = rabbit_taming {
+            if tamed {
+                // Entity event 18 draws love hearts on any animal's client, a rabbit's too; the
+                // wolf's event 7 is a `TamableAnimal`'s, which a rabbit's client is not.
+                self.mob_event_particles(self.mobs[index].id, 18);
+                let view = self.mob_entity(&self.mobs[index]);
+                self.trigger_entity("minecraft:tame_animal", "entity", &view);
+            } else {
+                // `TamableAnimal.spawnTamingParticles`' smoke, as particles.
+                let options = ParticleOptions::simple(ParticleType::Smoke);
+                let at = [feet[0], feet[1] + 0.5, feet[2]];
+                let (spread, count) = ([0.3, 0.3, 0.3], 7);
+                self.particles
+                    .send_particles(&options, at, spread, 0.02, count);
+                self.lan_send_particles(super::lan_particles::QueuedParticle {
+                    dimension: self.dim.id(),
+                    options,
+                    state: None,
+                    at,
+                    spread,
+                    speed: [0.02; 3],
+                    count: count as i32,
+                    randomization: 0,
+                });
+            }
+            let m = &self.mobs[index];
+            self.world.modified.insert((
+                m.position.x.floor() as i32 >> 4,
+                m.position.z.floor() as i32 >> 4,
+            ));
         }
         if let Some(fresh) = stew_particles {
             // `SpellParticleOption.create(EFFECT, -1, 1)` is the plain white

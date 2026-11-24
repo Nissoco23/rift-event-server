@@ -48,6 +48,7 @@ pub fn register(m: &mut Mob) {
     g.add(5, RaidGarden::new());
     g.add(6, Stroll::avoiding_water(0.6));
     g.add(11, LookAtPlayer::new(10.0));
+    super::tame::add_pet_goals(m);
     m.ai.mov.kind = super::control::MoveKind::Custom;
     m.ai.nav.can_float = true;
     m.extra.ints[IDLE_TIMEOUT] = m.random.next_int_bound(40).unwrap_or(0) + 180;
@@ -180,10 +181,12 @@ impl Goal for RaidGarden {
 /// `Rabbit.RabbitAvoidEntityGoal(rabbit, class, maxDist, 2.2, 2.2)`: the
 /// killer bunny flees nothing.
 #[derive(Clone, Debug)]
-struct RabbitAvoid(AvoidEntity);
+/// The second field is whether it is players it avoids: a tamed rabbit stops running from them.
+struct RabbitAvoid(AvoidEntity, bool);
 impl RabbitAvoid {
     fn new(what: Avoid, max_dist: f32) -> Self {
-        Self(AvoidEntity::new(what, max_dist, 2.2, 2.2))
+        let players = matches!(what, Avoid::Player);
+        Self(AvoidEntity::new(what, max_dist, 2.2, 2.2), players)
     }
 }
 impl Goal for RabbitAvoid {
@@ -195,7 +198,7 @@ impl Goal for RabbitAvoid {
         self.0.flags()
     }
     fn can_use(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
-        m.extra.variant != EVIL && self.0.can_use(m, cx)
+        m.extra.variant != EVIL && !(self.1 && m.extra.tame) && self.0.can_use(m, cx)
     }
     fn can_continue(&mut self, m: &mut Mob, cx: &mut Cx) -> bool {
         self.0.can_continue(m, cx)
