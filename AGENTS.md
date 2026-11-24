@@ -230,6 +230,7 @@ python3 tools/parity.py dedicated_server server_entities server_player_damage
 
 [docs/rift-naming.md](docs/rift-naming.md) (Rift names and Horizon names) ·
 [docs/rift-additions.md](docs/rift-additions.md) (where the engine differs from vanilla on purpose) ·
+[docs/upstream-sync.md](docs/upstream-sync.md) (what was taken from Horizon since the branch point, and how to look again) ·
 [docs/hosting.md](docs/hosting.md) (the operator's guide) ·
 [docs/native-mods.md](docs/native-mods.md) (the mod API and its server hooks) ·
 [docs/anticheat.md](docs/anticheat.md) ·
